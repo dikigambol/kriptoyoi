@@ -45,6 +45,12 @@
     currentEma21: null,
     currentStochK: null,
     currentStochD: null,
+    showZones: true,
+    currentZones: null,
+    buyZoneUpperLine: null,
+    buyZoneLowerLine: null,
+    sellZoneUpperLine: null,
+    sellZoneLowerLine: null,
   };
 
   // --- DOM Elements ---
@@ -74,6 +80,13 @@
     pressureText: document.getElementById('pressureText'),
     radarTpVal: document.getElementById('radarTpVal'),
     radarSlVal: document.getElementById('radarSlVal'),
+    radarBuyZoneBadge: document.getElementById('radarBuyZoneBadge'),
+    radarBuyZoneVal: document.getElementById('radarBuyZoneVal'),
+    radarSellZoneBadge: document.getElementById('radarSellZoneBadge'),
+    radarSellZoneVal: document.getElementById('radarSellZoneVal'),
+    radarZoneStatusPill: document.getElementById('radarZoneStatusPill'),
+    radarZoneStatusText: document.getElementById('radarZoneStatusText'),
+    toggleZones: document.getElementById('toggleZones'),
     // Coin Modal Trigger & Elements
     searchPairBtn: document.getElementById('searchPairBtn'),
     selectorCurrentCoin: document.getElementById('selectorCurrentCoin'),
@@ -106,6 +119,9 @@
     legendEma21: document.getElementById('legendEma21'),
     legendStochK: document.getElementById('legendStochK'),
     legendStochD: document.getElementById('legendStochD'),
+    stochKBadgeVal: document.getElementById('stochKBadgeVal'),
+    stochDBadgeVal: document.getElementById('stochDBadgeVal'),
+    stochHoverTime: document.getElementById('stochHoverTime'),
     // Toggles
     toggleEma9: document.getElementById('toggleEma9'),
     toggleEma21: document.getElementById('toggleEma21'),
@@ -199,28 +215,41 @@
     return results;
   }
 
-  // --- Stochastic RSI Calculation (14, 14, 3, 3) ---
+  // --- Stochastic RSI Calculation (14, 14, 3, 3) 1-to-1 Aligned with Candles ---
   function calculateStochRSI(candles, rsiPeriod = 14, stochPeriod = 14, kPeriod = 3, dPeriod = 3) {
-    if (!candles || candles.length < rsiPeriod + stochPeriod + kPeriod) {
+    if (!candles || candles.length === 0) {
       return { kData: [], dData: [] };
     }
 
-    // 1. Calculate standard RSI
+    const n = candles.length;
+    if (n < 5) {
+      const defaultK = candles.map(c => ({ time: c.time, value: 50 }));
+      const defaultD = candles.map(c => ({ time: c.time, value: 50 }));
+      return { kData: defaultK, dData: defaultD };
+    }
+
+    // 1. Calculate standard RSI for every candle
     const rsiValues = [];
     let gains = 0, losses = 0;
+    const warmupRsi = Math.min(rsiPeriod, n - 1);
 
-    for (let i = 1; i <= rsiPeriod; i++) {
+    for (let i = 1; i <= warmupRsi; i++) {
       const diff = candles[i].close - candles[i - 1].close;
       if (diff >= 0) gains += diff;
       else losses -= diff;
     }
 
-    let avgGain = gains / rsiPeriod;
-    let avgLoss = losses / rsiPeriod;
+    let avgGain = gains / Math.max(1, warmupRsi);
+    let avgLoss = losses / Math.max(1, warmupRsi);
     let rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-    rsiValues.push({ time: candles[rsiPeriod].time, rsi: 100 - (100 / (1 + rs)) });
+    let seedRsi = 100 - (100 / (1 + rs));
 
-    for (let i = rsiPeriod + 1; i < candles.length; i++) {
+    // Pad initial bars before warmupRsi with seedRsi so length matches candles exactly
+    for (let i = 0; i < Math.min(rsiPeriod, n); i++) {
+      rsiValues.push({ time: candles[i].time, rsi: seedRsi });
+    }
+
+    for (let i = rsiPeriod; i < n; i++) {
       const diff = candles[i].close - candles[i - 1].close;
       const gain = diff >= 0 ? diff : 0;
       const loss = diff < 0 ? -diff : 0;
@@ -233,29 +262,32 @@
 
     // 2. Raw StochRSI = (RSI - MinRSI) / (MaxRSI - MinRSI) * 100
     const rawStoch = [];
-    for (let i = stochPeriod - 1; i < rsiValues.length; i++) {
-      const slice = rsiValues.slice(i - stochPeriod + 1, i + 1).map(x => x.rsi);
+    for (let i = 0; i < n; i++) {
+      const start = Math.max(0, i - stochPeriod + 1);
+      const slice = rsiValues.slice(start, i + 1).map(x => x.rsi);
       const minRsi = Math.min(...slice);
       const maxRsi = Math.max(...slice);
       const currRsi = rsiValues[i].rsi;
       let stoch = maxRsi === minRsi ? 50 : ((currRsi - minRsi) / (maxRsi - minRsi)) * 100;
-      rawStoch.push({ time: rsiValues[i].time, val: stoch });
+      rawStoch.push({ time: candles[i].time, val: stoch });
     }
 
-    // 3. Smooth with kPeriod SMA -> %K (Cyan)
+    // 3. Smooth with kPeriod SMA -> %K (Cyan) - aligned 1-to-1 with every candle
     const kData = [];
-    for (let i = kPeriod - 1; i < rawStoch.length; i++) {
-      const slice = rawStoch.slice(i - kPeriod + 1, i + 1).map(x => x.val);
-      const avgK = slice.reduce((a, b) => a + b, 0) / kPeriod;
-      kData.push({ time: rawStoch[i].time, value: parseFloat(avgK.toFixed(2)) });
+    for (let i = 0; i < n; i++) {
+      const start = Math.max(0, i - kPeriod + 1);
+      const slice = rawStoch.slice(start, i + 1).map(x => x.val);
+      const avgK = slice.reduce((a, b) => a + b, 0) / slice.length;
+      kData.push({ time: candles[i].time, value: parseFloat(avgK.toFixed(2)) });
     }
 
-    // 4. Smooth with dPeriod SMA -> %D (Orange)
+    // 4. Smooth with dPeriod SMA -> %D (Orange) - aligned 1-to-1 with every candle
     const dData = [];
-    for (let i = dPeriod - 1; i < kData.length; i++) {
-      const slice = kData.slice(i - dPeriod + 1, i + 1).map(x => x.value);
-      const avgD = slice.reduce((a, b) => a + b, 0) / dPeriod;
-      dData.push({ time: kData[i].time, value: parseFloat(avgD.toFixed(2)) });
+    for (let i = 0; i < n; i++) {
+      const start = Math.max(0, i - dPeriod + 1);
+      const slice = kData.slice(start, i + 1).map(x => x.value);
+      const avgD = slice.reduce((a, b) => a + b, 0) / slice.length;
+      dData.push({ time: candles[i].time, value: parseFloat(avgD.toFixed(2)) });
     }
 
     return { kData, dData };
@@ -397,6 +429,176 @@
     }
   }
 
+  // --- Calculation of Dynamic Buy (Demand) & Sell (Supply) Zones ---
+  function calculateBuySellZones(candles) {
+    if (!candles || candles.length < 15) return null;
+
+    const lookback = Math.min(candles.length, 50);
+    const slice = candles.slice(-lookback);
+    const currentPrice = slice[slice.length - 1].close;
+
+    // 1. Calculate ATR (14 period)
+    let trSum = 0;
+    const atrPeriod = Math.min(14, slice.length - 1);
+    for (let i = slice.length - atrPeriod; i < slice.length; i++) {
+      const prevClose = slice[i - 1].close;
+      const c = slice[i];
+      const tr = Math.max(c.high - c.low, Math.abs(c.high - prevClose), Math.abs(c.low - prevClose));
+      trSum += tr;
+    }
+    const atr = trSum / atrPeriod;
+
+    // 2. Identify Swing Lows below currentPrice
+    const swingLows = [];
+    for (let i = 2; i < slice.length - 1; i++) {
+      const bar = slice[i];
+      if (bar.low <= slice[i - 1].low && bar.low <= slice[i + 1].low && bar.low < currentPrice) {
+        swingLows.push(bar.low);
+      }
+    }
+
+    // 3. Identify Swing Highs above currentPrice
+    const swingHighs = [];
+    for (let i = 2; i < slice.length - 1; i++) {
+      const bar = slice[i];
+      if (bar.high >= slice[i - 1].high && bar.high >= slice[i + 1].high && bar.high > currentPrice) {
+        swingHighs.push(bar.high);
+      }
+    }
+
+    // Pick closest relevant swing low/high
+    let baseBuy = swingLows.length > 0 ? swingLows[swingLows.length - 1] : Math.min(...slice.map(s => s.low));
+    let baseSell = swingHighs.length > 0 ? swingHighs[swingHighs.length - 1] : Math.max(...slice.map(s => s.high));
+
+    // Fallback if baseBuy is at or above currentPrice
+    if (baseBuy >= currentPrice) {
+      baseBuy = currentPrice - (1.2 * atr);
+    }
+    // Fallback if baseSell is at or below currentPrice
+    if (baseSell <= currentPrice) {
+      baseSell = currentPrice + (1.2 * atr);
+    }
+
+    const buyMin = Math.max(0, baseBuy - (0.3 * atr));
+    const buyMax = Math.min(currentPrice * 0.9995, baseBuy + (0.35 * atr));
+
+    const sellMin = Math.max(currentPrice * 1.0005, baseSell - (0.35 * atr));
+    const sellMax = baseSell + (0.3 * atr);
+
+    return {
+      buyMin: parseFloat(buyMin.toFixed(getPrecision(currentPrice))),
+      buyMax: parseFloat(buyMax.toFixed(getPrecision(currentPrice))),
+      sellMin: parseFloat(sellMin.toFixed(getPrecision(currentPrice))),
+      sellMax: parseFloat(sellMax.toFixed(getPrecision(currentPrice))),
+      atr: atr
+    };
+  }
+
+  // --- Render & Update Dynamic Buy & Sell Zones on Chart and Radar ---
+  function updateBuySellZones(zones, currentPrice) {
+    if (!zones) return;
+    state.currentZones = zones;
+
+    // 1. Remove old price lines if existing
+    clearZonePriceLines();
+
+    // 2. Draw price lines on candleSeries if showZones is true
+    if (state.showZones && state.candleSeries) {
+      // Sell Area (Supply)
+      state.sellZoneUpperLine = state.candleSeries.createPriceLine({
+        price: zones.sellMax,
+        color: 'rgba(244, 63, 94, 0.65)',
+        lineWidth: 1,
+        lineStyle: LightweightCharts.LineStyle.Dotted,
+        axisLabelVisible: true,
+        title: 'SELL TOP',
+      });
+
+      state.sellZoneLowerLine = state.candleSeries.createPriceLine({
+        price: zones.sellMin,
+        color: '#f43f5e',
+        lineWidth: 1.5,
+        lineStyle: LightweightCharts.LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: '🔴 AREA JUAL',
+      });
+
+      // Buy Area (Demand)
+      state.buyZoneUpperLine = state.candleSeries.createPriceLine({
+        price: zones.buyMax,
+        color: '#10b981',
+        lineWidth: 1.5,
+        lineStyle: LightweightCharts.LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: '🟢 AREA BELI',
+      });
+
+      state.buyZoneLowerLine = state.candleSeries.createPriceLine({
+        price: zones.buyMin,
+        color: 'rgba(16, 185, 129, 0.65)',
+        lineWidth: 1,
+        lineStyle: LightweightCharts.LineStyle.Dotted,
+        axisLabelVisible: true,
+        title: 'BUY BOTTOM',
+      });
+    }
+
+    // 3. Update Scalper Radar Ribbon Zones Widget
+    if (el.radarBuyZoneVal) {
+      el.radarBuyZoneVal.textContent = `${formatPrice(zones.buyMin, state.symbol)} - ${formatPrice(zones.buyMax, state.symbol)}`;
+    }
+    if (el.radarSellZoneVal) {
+      el.radarSellZoneVal.textContent = `${formatPrice(zones.sellMin, state.symbol)} - ${formatPrice(zones.sellMax, state.symbol)}`;
+    }
+
+    updateZoneStatusBadge(currentPrice);
+  }
+
+  function updateZoneStatusBadge(currentPrice) {
+    const zones = state.currentZones;
+    if (!zones || !el.radarZoneStatusPill || !el.radarZoneStatusText || !currentPrice) return;
+
+    if (currentPrice <= zones.buyMax && currentPrice >= zones.buyMin) {
+      el.radarZoneStatusPill.className = 'zone-status-pill in-buy';
+      el.radarZoneStatusText.textContent = '⚡ DALAM AREA BELI (DEMAND)';
+    } else if (currentPrice >= zones.sellMin && currentPrice <= zones.sellMax) {
+      el.radarZoneStatusPill.className = 'zone-status-pill in-sell';
+      el.radarZoneStatusText.textContent = '🚀 DALAM AREA JUAL (SUPPLY)';
+    } else if (currentPrice < zones.buyMin) {
+      el.radarZoneStatusPill.className = 'zone-status-pill in-buy';
+      el.radarZoneStatusText.textContent = '⚠️ DI BAWAH AREA BELI (DISCOUNT)';
+    } else if (currentPrice > zones.sellMax) {
+      el.radarZoneStatusPill.className = 'zone-status-pill in-sell';
+      el.radarZoneStatusText.textContent = '🔥 DI ATAS AREA JUAL (BREAKOUT)';
+    } else {
+      const distToBuy = (((currentPrice - zones.buyMax) / currentPrice) * 100).toFixed(2);
+      const distToSell = (((zones.sellMin - currentPrice) / currentPrice) * 100).toFixed(2);
+      el.radarZoneStatusPill.className = 'zone-status-pill neutral';
+      el.radarZoneStatusText.textContent = `⚖️ -${distToBuy}% ke Beli | +${distToSell}% ke Jual`;
+    }
+  }
+
+  function clearZonePriceLines() {
+    if (state.candleSeries) {
+      if (state.buyZoneUpperLine) {
+        try { state.candleSeries.removePriceLine(state.buyZoneUpperLine); } catch(e) {}
+        state.buyZoneUpperLine = null;
+      }
+      if (state.buyZoneLowerLine) {
+        try { state.candleSeries.removePriceLine(state.buyZoneLowerLine); } catch(e) {}
+        state.buyZoneLowerLine = null;
+      }
+      if (state.sellZoneUpperLine) {
+        try { state.candleSeries.removePriceLine(state.sellZoneUpperLine); } catch(e) {}
+        state.sellZoneUpperLine = null;
+      }
+      if (state.sellZoneLowerLine) {
+        try { state.candleSeries.removePriceLine(state.sellZoneLowerLine); } catch(e) {}
+        state.sellZoneLowerLine = null;
+      }
+    }
+  }
+
   // --- TradingView Chart Initialization (Main Chart + StochRSI Sub-chart) ---
   function initChart() {
     if (!window.LightweightCharts) {
@@ -466,6 +668,7 @@
       rightPriceScale: {
         borderColor: '#1e283d',
         autoScale: true,
+        minimumWidth: 72,
         scaleMargins: {
           top: 0.12,
           bottom: 0.22,
@@ -478,6 +681,7 @@
         secondsVisible: false,
         barSpacing: 10,
         minBarSpacing: 4,
+        rightOffset: 12,
         tickMarkFormatter: (time, tickMarkType) => {
           const d = new Date(time * 1000);
           if (tickMarkType === 0) {
@@ -564,11 +768,15 @@
         crosshair: commonCrosshair,
         rightPriceScale: {
           borderColor: '#1e283d',
-          autoScale: false,
+          autoScale: true,
+          minimumWidth: 72,
           scaleMargins: { top: 0.1, bottom: 0.1 },
         },
         timeScale: {
           visible: false,
+          barSpacing: 10,
+          minBarSpacing: 4,
+          rightOffset: 12,
         },
         handleScale: { mouseWheel: true, pinch: true },
         handleScroll: { mouseWheel: true, pressedMouseMove: true },
@@ -576,22 +784,34 @@
 
       state.stochChart = LightweightCharts.createChart(el.stochRsiContainer, stochOptions);
 
-      // %K Line (Cyan)
+      // %K Line (Cyan) - Normalized 0 to 100
       state.stochKSeries = state.stochChart.addLineSeries({
         color: '#06b6d4',
-        lineWidth: 1.5,
+        lineWidth: 2,
         priceLineVisible: false,
         lastValueVisible: true,
         title: '%K',
+        autoscaleInfoProvider: () => ({
+          priceRange: {
+            minValue: 0,
+            maxValue: 100,
+          },
+        }),
       });
 
-      // %D Line (Orange)
+      // %D Line (Orange) - Normalized 0 to 100
       state.stochDSeries = state.stochChart.addLineSeries({
         color: '#f97316',
-        lineWidth: 1.5,
+        lineWidth: 2,
         priceLineVisible: false,
         lastValueVisible: true,
         title: '%D',
+        autoscaleInfoProvider: () => ({
+          priceRange: {
+            minValue: 0,
+            maxValue: 100,
+          },
+        }),
       });
 
       // Overbought 80 & Oversold 20 threshold lines
@@ -624,6 +844,23 @@
           state.chart.timeScale().setVisibleLogicalRange(range);
         }
       });
+
+      // Crosshair handler for stochChart
+      state.stochChart.subscribeCrosshairMove((param) => {
+        if (!param.time) {
+          updateLegendWithLatest();
+          return;
+        }
+        if (el.stochHoverTime) {
+          el.stochHoverTime.textContent = formatTime(param.time, true);
+        }
+        const kVal = param.seriesData && state.stochKSeries ? param.seriesData.get(state.stochKSeries) : null;
+        const dVal = param.seriesData && state.stochDSeries ? param.seriesData.get(state.stochDSeries) : null;
+        if (el.stochKBadgeVal && kVal) el.stochKBadgeVal.textContent = kVal.value.toFixed(1);
+        if (el.stochDBadgeVal && dVal) el.stochDBadgeVal.textContent = dVal.value.toFixed(1);
+
+        if (el.legendTime) el.legendTime.textContent = formatDate(param.time);
+      });
     }
 
     // Crosshair legend handler
@@ -639,6 +876,16 @@
       const ema21 = param.seriesData.get(state.ema21Series);
       const stochK = state.stochKSeries ? param.seriesData.get(state.stochKSeries) : null;
       const stochD = state.stochDSeries ? param.seriesData.get(state.stochDSeries) : null;
+
+      if (el.stochHoverTime) {
+        el.stochHoverTime.textContent = formatTime(param.time, true);
+      }
+      if (el.stochKBadgeVal && stochK) {
+        el.stochKBadgeVal.textContent = stochK.value.toFixed(1);
+      }
+      if (el.stochDBadgeVal && stochD) {
+        el.stochDBadgeVal.textContent = stochD.value.toFixed(1);
+      }
 
       renderLegendData(param.time, candle, volume, ema9, ema21, stochK, stochD);
     });
@@ -701,6 +948,15 @@
       state.currentStochK !== null ? { value: state.currentStochK } : null,
       state.currentStochD !== null ? { value: state.currentStochD } : null
     );
+    if (el.stochHoverTime) {
+      el.stochHoverTime.textContent = formatTime(state.lastCandle.time, true);
+    }
+    if (el.stochKBadgeVal && state.currentStochK !== null) {
+      el.stochKBadgeVal.textContent = state.currentStochK.toFixed(1);
+    }
+    if (el.stochDBadgeVal && state.currentStochD !== null) {
+      el.stochDBadgeVal.textContent = state.currentStochD.toFixed(1);
+    }
   }
 
   function parseTokocryptoRawKlines(rawKlines) {
@@ -819,6 +1075,15 @@
 
       // Update Scalper Radar Ribbon (Metode 1)
       updateScalperRadar(last, lastE9, lastE21, lastK, lastD);
+      if (el.stochKBadgeVal && lastK !== null) el.stochKBadgeVal.textContent = lastK.toFixed(1);
+      if (el.stochDBadgeVal && lastD !== null) el.stochDBadgeVal.textContent = lastD.toFixed(1);
+      if (el.stochHoverTime && last) el.stochHoverTime.textContent = formatTime(last.time, true);
+
+      // Compute & Render Dynamic Buy & Sell Zones
+      const initialZones = calculateBuySellZones(candles);
+      if (initialZones) {
+        updateBuySellZones(initialZones, last.close);
+      }
 
       // Fit content for both main chart and stoch chart
       state.chart.timeScale().fitContent();
@@ -1012,6 +1277,26 @@
       state.currentEma21 = liveEma21;
     }
 
+    // Dynamic Live Recalculation of StochRSI on every price tick
+    if (state.candlesCache && state.candlesCache.length >= 32) {
+      const liveStoch = calculateStochRSI(state.candlesCache, 14, 14, 3, 3);
+      if (liveStoch.kData.length > 0) {
+        const lastK = liveStoch.kData[liveStoch.kData.length - 1];
+        if (state.stochKSeries) state.stochKSeries.update(lastK);
+        state.currentStochK = lastK.value;
+        if (el.stochKBadgeVal) el.stochKBadgeVal.textContent = lastK.value.toFixed(1);
+      }
+      if (liveStoch.dData.length > 0) {
+        const lastD = liveStoch.dData[liveStoch.dData.length - 1];
+        if (state.stochDSeries) state.stochDSeries.update(lastD);
+        state.currentStochD = lastD.value;
+        if (el.stochDBadgeVal) el.stochDBadgeVal.textContent = lastD.value.toFixed(1);
+      }
+      if (el.stochHoverTime) {
+        el.stochHoverTime.textContent = formatTime(candleTime, true);
+      }
+    }
+
     // Jika candle close: sinkronisasi penuh indikator & perbarui sinyal marker
     if (isClosed && state.candlesCache && state.candlesCache.length >= 25) {
       const ema9Data = calculateEMA(state.candlesCache, 9);
@@ -1034,10 +1319,17 @@
       if (ema21Data.length > 0) state.currentEma21 = ema21Data[ema21Data.length - 1].value;
       if (stochData.kData.length > 0) state.currentStochK = stochData.kData[stochData.kData.length - 1].value;
       if (stochData.dData.length > 0) state.currentStochD = stochData.dData[stochData.dData.length - 1].value;
+
+      // Recalculate dynamic buy & sell zones on candle close
+      const refreshedZones = calculateBuySellZones(state.candlesCache);
+      if (refreshedZones) {
+        updateBuySellZones(refreshedZones, c);
+      }
     }
 
     // Perbarui Radar Scalper (Metode 1) secara real-time
     updateScalperRadar(candleBar, state.currentEma9, state.currentEma21, state.currentStochK, state.currentStochD);
+    updateZoneStatusBadge(c);
 
     updatePriceDisplay(c, state.lastPrice);
     state.lastPrice = c;
@@ -1146,6 +1438,7 @@
     state.symbol = newSymbol.toUpperCase().replace('_', '');
     updateSymbolUI();
     el.tradesList.innerHTML = '';
+    clearZonePriceLines();
     await loadHistoricalData();
     connectWebSocket();
   }
@@ -1154,6 +1447,7 @@
     if (newInterval === state.interval) return;
     state.interval = newInterval;
     updateIntervalUI();
+    clearZonePriceLines();
     await loadHistoricalData();
     connectWebSocket();
   }
@@ -1571,6 +1865,18 @@
         el.toggleSignals.classList.toggle('active', state.showSignals);
         if (state.candleSeries) {
           state.candleSeries.setMarkers(state.showSignals ? (state.scalperMarkers || []) : []);
+        }
+      });
+    }
+
+    if (el.toggleZones) {
+      el.toggleZones.addEventListener('click', () => {
+        state.showZones = !state.showZones;
+        el.toggleZones.classList.toggle('active', state.showZones);
+        if (state.currentZones && state.lastPrice) {
+          updateBuySellZones(state.currentZones, state.lastPrice);
+        } else if (!state.showZones) {
+          clearZonePriceLines();
         }
       });
     }

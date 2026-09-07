@@ -755,6 +755,7 @@ html, body {
 .ema21-dot { background: #06b6d4; box-shadow: 0 0 6px #06b6d4; }
 .stoch-dot { background: linear-gradient(135deg, #06b6d4 0%, #f97316 100%); box-shadow: 0 0 6px rgba(6, 182, 212, 0.5); }
 .signal-dot-icon { background: linear-gradient(135deg, #10b981 0%, #f43f5e 100%); }
+.zone-dot-icon { background: linear-gradient(135deg, #10b981 50%, #f43f5e 50%); box-shadow: 0 0 6px rgba(16, 185, 129, 0.5); }
 .vol-dot { background: #64748b; }
 
 /* ================= SCALPER RADAR RIBBON (METODE 1) ================= */
@@ -885,6 +886,74 @@ html, body {
   color: #fff;
 }
 
+/* Prediksi Area Buy & Sell Zones */
+.radar-zones-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.zone-badge {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 0.73rem;
+  font-family: var(--font-mono);
+}
+
+.zone-buy-badge {
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  color: var(--bull-color);
+}
+
+.zone-sell-badge {
+  background: rgba(244, 63, 94, 0.12);
+  border: 1px solid rgba(244, 63, 94, 0.35);
+  color: var(--bear-color);
+}
+
+.zone-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  opacity: 0.85;
+}
+
+.zone-val {
+  font-weight: 700;
+  color: #fff;
+}
+
+.zone-status-pill {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.zone-status-pill.in-buy {
+  background: rgba(16, 185, 129, 0.25);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.6);
+  font-weight: 800;
+  animation: pulse-buy 1.5s infinite;
+}
+
+.zone-status-pill.in-sell {
+  background: rgba(244, 63, 94, 0.25);
+  color: #fb7185;
+  border: 1px solid rgba(244, 63, 94, 0.6);
+  font-weight: 800;
+}
+
+.zone-status-pill.neutral {
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--text-secondary);
+}
+
 /* Radar Targets */
 .radar-targets-group {
   display: flex;
@@ -968,13 +1037,28 @@ html, body {
   top: 6px;
   left: 12px;
   z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-family: var(--font-mono);
-  font-size: 0.7rem;
+  font-size: 0.72rem;
   color: var(--text-muted);
-  background: rgba(15, 23, 42, 0.7);
-  padding: 2px 8px;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 3px 10px;
   border-radius: 4px;
   pointer-events: none;
+  backdrop-filter: blur(4px);
+}
+
+.stoch-time-badge {
+  color: #60a5fa;
+  background: rgba(96, 165, 250, 0.12);
+  border: 1px solid rgba(96, 165, 250, 0.3);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-weight: 700;
+  font-size: 0.7rem;
 }
 
 /* Legend Overlay */

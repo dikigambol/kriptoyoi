@@ -167,6 +167,9 @@
           <button id="toggleSignals" class="tool-btn active" title="Toggle Marker Sinyal Buy/Sell di Candlestick">
             <span class="btn-color-dot signal-dot-icon"></span> Sinyal Scalp
           </button>
+          <button id="toggleZones" class="tool-btn active" title="Toggle Garis Area Buy (Demand) & Area Sell (Supply)">
+            <span class="btn-color-dot zone-dot-icon"></span> Area Beli/Jual
+          </button>
           <button id="toggleVolume" class="tool-btn active" title="Toggle Volume Sub-chart">
             <span class="btn-color-dot vol-dot"></span> Vol
           </button>
@@ -207,11 +210,26 @@
 
         <!-- Live Order Flow Pressure Meter -->
         <div class="confluence-item tape-pressure-item">
-          <span class="cf-label">Tekanan Beli Realtime (Tape)</span>
+          <span class="cf-label">Tekanan Beli (Tape)</span>
           <div class="pressure-bar-wrapper">
             <div class="pressure-fill-buy" id="pressureFillBuy" style="width: 50%;"></div>
           </div>
           <span class="pressure-text" id="pressureText">50% Beli</span>
+        </div>
+      </div>
+
+      <!-- Prediksi Area Buy (Demand) & Area Sell (Supply) -->
+      <div class="radar-zones-group">
+        <div class="zone-badge zone-buy-badge" id="radarBuyZoneBadge" title="Area Pantulan Beli Terdekat (Demand)">
+          <span class="zone-label">🟢 AREA BELI:</span>
+          <span class="zone-val" id="radarBuyZoneVal">--</span>
+        </div>
+        <div class="zone-badge zone-sell-badge" id="radarSellZoneBadge" title="Area Target Jual Terdekat (Supply)">
+          <span class="zone-label">🔴 AREA JUAL:</span>
+          <span class="zone-val" id="radarSellZoneVal">--</span>
+        </div>
+        <div class="zone-status-pill neutral" id="radarZoneStatusPill">
+          <span id="radarZoneStatusText">Di Tengah Zona</span>
         </div>
       </div>
 
@@ -258,7 +276,13 @@
         <div class="split-charts-container" id="splitChartsContainer">
           <div id="chartContainer" class="chart-canvas-wrapper"></div>
           <div id="stochRsiContainer" class="stoch-canvas-wrapper">
-            <div class="stoch-legend-badge">Stoch RSI (14, 14, 3, 3) | <span style="color:#06b6d4">%K</span> / <span style="color:#f97316">%D</span> | Overbought 80 / Oversold 20</div>
+            <div class="stoch-legend-badge" id="stochLegendBadge">
+              <span class="stoch-title">Stoch RSI (14, 14, 3, 3)</span>
+              <span class="stoch-time-badge" id="stochHoverTime">--:--:-- WIB</span>
+              <span style="color:#06b6d4; font-weight:700;">%K: <span id="stochKBadgeVal">--</span></span>
+              <span style="color:#f97316; font-weight:700;">%D: <span id="stochDBadgeVal">--</span></span>
+              <span style="opacity: 0.65;">OB 80 / OS 20</span>
+            </div>
           </div>
         </div>
 
