@@ -761,7 +761,7 @@
       rightPriceScale: {
         borderColor: '#1e283d',
         autoScale: true,
-        minimumWidth: 72,
+        minimumWidth: 85,
         scaleMargins: {
           top: 0.12,
           bottom: 0.22,
@@ -862,7 +862,7 @@
         rightPriceScale: {
           borderColor: '#1e283d',
           autoScale: true,
-          minimumWidth: 80,
+          minimumWidth: 85,
           scaleMargins: { top: 0.1, bottom: 0.1 },
           alignLabels: true,
         },
