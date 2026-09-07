@@ -89,6 +89,9 @@ async def get_symbols():
                             "priceChangePercent": float(t.get("priceChangePercent", 0) or 0),
                             "quoteVolume": float(t.get("quoteVolume", 0) or 0),
                             "volume": float(t.get("volume", 0) or 0),
+                            "highPrice": float(t.get("highPrice", 0) or 0),
+                            "lowPrice": float(t.get("lowPrice", 0) or 0),
+                            "openPrice": float(t.get("openPrice", 0) or 0),
                         })
 
             if not symbols_list and resp_ticker.status_code == 200:
@@ -103,6 +106,9 @@ async def get_symbols():
                         "priceChangePercent": float(t.get("priceChangePercent", 0) or 0),
                         "quoteVolume": float(t.get("quoteVolume", 0) or 0),
                         "volume": float(t.get("volume", 0) or 0),
+                        "highPrice": float(t.get("highPrice", 0) or 0),
+                        "lowPrice": float(t.get("lowPrice", 0) or 0),
+                        "openPrice": float(t.get("openPrice", 0) or 0),
                     })
 
             # Sort by volume descending
@@ -124,6 +130,20 @@ async def get_symbols():
             {"symbol": "ETHBIDR", "baseAsset": "ETH", "quoteAsset": "BIDR", "lastPrice": 0, "priceChangePercent": 0, "quoteVolume": 400000},
         ]
         return fallback
+
+
+@app.get("/api/ticker24hr")
+async def get_ticker24hr(symbol: str = Query("BTCUSDT", description="Trading pair symbol")):
+    """Fetch 24hr ticker statistics for a symbol."""
+    clean_symbol = symbol.upper().replace("_", "")
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(f"{BASE_REST_URL}/api/v3/ticker/24hr", params={"symbol": clean_symbol}, headers=get_headers())
+            if resp.status_code == 200:
+                return resp.json()
+    except Exception:
+        pass
+    return {}
 
 
 @app.get("/api/klines")

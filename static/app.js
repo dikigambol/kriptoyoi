@@ -56,6 +56,9 @@
     buyZoneLowerLine: null,
     sellZoneUpperLine: null,
     sellZoneLowerLine: null,
+    highPrice24h: null,
+    lowPrice24h: null,
+    openPrice24h: null,
   };
 
   // --- DOM Elements ---
@@ -1225,6 +1228,14 @@
       state.lastCandle = { ...last, volume: volumes[volumes.length - 1]?.value || 0 };
       state.lastPrice = last.close;
 
+      // Estimate initial candleCloseTime based on timeframe interval
+      const intervalSecMap = { '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '2h': 7200, '4h': 14400, '1d': 86400, '1w': 604800 };
+      const durSec = intervalSecMap[state.interval] || 60;
+      state.candleCloseTime = (last.time + durSec) * 1000;
+
+      // Eagerly load 24h stats (High, Low, Vol, Change) for current coin
+      load24hStats();
+
       // Update price scale precision for the new coin
       const prec = getPrecision(last.close);
       state.candleSeries.applyOptions({
@@ -1390,14 +1401,12 @@
           const currentPrefix = state.symbol.toLowerCase();
           if (streamName && !streamName.startsWith(currentPrefix)) return;
 
-          if (streamName.includes('@kline')) {
+          if (streamName.includes('@kline') || d.e === 'kline') {
             handleKlineUpdate(d);
-          } else if (streamName.includes('@miniTicker')) {
+          } else if (streamName.includes('ticker') || d.e === '24hrMiniTicker' || d.e === '24hrTicker') {
             handleMiniTickerUpdate(d);
-          } else if (streamName.includes('@trade')) {
+          } else if (streamName.includes('@trade') || d.e === 'trade') {
             handleTradeUpdate(d);
-          } else if (d.e === 'kline') {
-            handleKlineUpdate(d);
           }
         } catch (err) {
           console.error('Error parsing WebSocket message:', err);
@@ -1581,23 +1590,101 @@
     if (!payload) return;
 
     // Symbol guard
-    const sym = (payload.s || '').toUpperCase();
+    const sym = (payload.s || payload.symbol || '').toUpperCase();
     if (sym && sym !== state.symbol) return;
 
-    const high = parseFloat(payload.h);
-    const low = parseFloat(payload.l);
-    const vol = parseFloat(payload.q); // Quote asset volume
-    const curPrice = parseFloat(payload.c);
-    const openPrice = parseFloat(payload.o);
+    const high = parseFloat(payload.h || payload.highPrice);
+    const low = parseFloat(payload.l || payload.lowPrice);
+    const vol = parseFloat(payload.q || payload.quoteVolume || payload.v || payload.volume);
+    const curPrice = parseFloat(payload.c || payload.lastPrice);
+    const openPrice = parseFloat(payload.o || payload.openPrice);
 
-    if (high) el.statHigh.textContent = formatPrice(high, state.symbol);
-    if (low) el.statLow.textContent = formatPrice(low, state.symbol);
-    if (vol) el.statVolume.textContent = formatVolume(vol);
+    if (!isNaN(high) && high > 0) {
+      state.highPrice24h = high;
+      if (el.statHigh) el.statHigh.textContent = formatPrice(high, state.symbol);
+    }
+    if (!isNaN(low) && low > 0) {
+      state.lowPrice24h = low;
+      if (el.statLow) el.statLow.textContent = formatPrice(low, state.symbol);
+    }
+    if (!isNaN(vol) && vol > 0 && el.statVolume) {
+      el.statVolume.textContent = formatVolume(vol);
+    }
+    if (!isNaN(openPrice) && openPrice > 0) {
+      state.openPrice24h = openPrice;
+    }
 
-    if (curPrice && openPrice) {
-      const changePct = ((curPrice - openPrice) / openPrice) * 100;
+    let changePct = null;
+    if (payload.priceChangePercent !== undefined && !isNaN(parseFloat(payload.priceChangePercent))) {
+      changePct = parseFloat(payload.priceChangePercent);
+    } else if (curPrice && openPrice) {
+      changePct = ((curPrice - openPrice) / openPrice) * 100;
+    }
+
+    if (changePct !== null && el.displayChange) {
       el.displayChange.textContent = `${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%`;
       el.displayChange.className = `price-change-badge ${changePct >= 0 ? 'positive' : 'negative'}`;
+    }
+
+    // Also update display price if it was empty or out of date
+    if (!isNaN(curPrice) && curPrice > 0 && (!state.lastPrice || el.displayPrice.textContent === '--')) {
+      updatePriceDisplay(curPrice, state.lastPrice);
+      state.lastPrice = curPrice;
+    }
+  }
+
+  // --- REST: Eagerly fetch 24h Ticker Stats (Instant Display) ---
+  async function load24hStats() {
+    const cleanSym = state.symbol.toUpperCase().replace('_', '');
+
+    // 1. Immediately display from state.allSymbols cache if already available
+    if (state.allSymbols && state.allSymbols.length > 0) {
+      const found = state.allSymbols.find(s => s.symbol === cleanSym);
+      if (found) {
+        if (found.lastPrice) updatePriceDisplay(found.lastPrice, state.lastPrice);
+        if (found.priceChangePercent !== undefined && el.displayChange) {
+          const change = parseFloat(found.priceChangePercent);
+          el.displayChange.textContent = `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
+          el.displayChange.className = `price-change-badge ${change >= 0 ? 'positive' : 'negative'}`;
+        }
+        if (found.highPrice && el.statHigh) {
+          el.statHigh.textContent = formatPrice(found.highPrice, state.symbol);
+          state.highPrice24h = found.highPrice;
+        }
+        if (found.lowPrice && el.statLow) {
+          el.statLow.textContent = formatPrice(found.lowPrice, state.symbol);
+          state.lowPrice24h = found.lowPrice;
+        }
+        if (found.quoteVolume && el.statVolume) {
+          el.statVolume.textContent = formatVolume(found.quoteVolume);
+        }
+        if (found.openPrice) {
+          state.openPrice24h = found.openPrice;
+        }
+      }
+    }
+
+    // 2. Fetch fresh 24hr ticker from backend proxy (fast & reliable)
+    try {
+      let data = null;
+      try {
+        const res = await fetch(`/api/ticker24hr?symbol=${encodeURIComponent(state.symbol)}`);
+        if (res.ok) data = await res.json();
+      } catch (e) { }
+
+      // Direct fallback if backend was unreachable
+      if (!data || !data.lastPrice) {
+        try {
+          const directRes = await fetch(`https://www.tokocrypto.site/api/v3/ticker/24hr?symbol=${cleanSym}`);
+          if (directRes.ok) data = await directRes.json();
+        } catch (e) { }
+      }
+
+      if (data && (data.symbol === cleanSym || !data.symbol)) {
+        handleMiniTickerUpdate(data);
+      }
+    } catch (e) {
+      console.warn('Gagal memuat 24h stats:', e);
     }
   }
 
@@ -1662,15 +1749,34 @@
   }
 
   // --- Candle Countdown Timer ---
+  function getNextCandleCloseTime(interval) {
+    const now = Date.now();
+    const intervalMsMap = {
+      '1m': 60 * 1000,
+      '3m': 3 * 60 * 1000,
+      '5m': 5 * 60 * 1000,
+      '15m': 15 * 60 * 1000,
+      '30m': 30 * 60 * 1000,
+      '1h': 60 * 60 * 1000,
+      '2h': 2 * 60 * 60 * 1000,
+      '4h': 4 * 60 * 60 * 1000,
+      '1d': 24 * 60 * 60 * 1000,
+      '1w': 7 * 24 * 60 * 60 * 1000,
+    };
+    const step = intervalMsMap[interval] || 60000;
+    return Math.ceil(now / step) * step;
+  }
+
   function startCandleTimer() {
     if (state.timerInterval) clearInterval(state.timerInterval);
     state.timerInterval = setInterval(() => {
-      if (!state.candleCloseTime) {
-        el.candleTimer.textContent = '--:--';
-        return;
-      }
       const now = Date.now();
-      const diffMs = state.candleCloseTime - now;
+      let targetTime = state.candleCloseTime;
+      // If candle close time is missing or already expired, fall back to exact clock-aligned interval close
+      if (!targetTime || targetTime <= now) {
+        targetTime = getNextCandleCloseTime(state.interval);
+      }
+      const diffMs = targetTime - now;
       if (diffMs <= 0) {
         el.candleTimer.textContent = '00:00';
         return;
@@ -1696,6 +1802,7 @@
     const currentToken = ++state.loadDataSeq;
 
     updateSymbolUI();
+    load24hStats(); // Immediately update 24H stats for new pair
     el.tradesList.innerHTML = '';
     clearZonePriceLines();
     state.currentZones = null;
@@ -1816,6 +1923,9 @@
                 priceChangePercent: parseFloat(t.priceChangePercent || 0),
                 quoteVolume: parseFloat(t.quoteVolume || 0),
                 volume: parseFloat(t.volume || 0),
+                highPrice: parseFloat(t.highPrice || 0),
+                lowPrice: parseFloat(t.lowPrice || 0),
+                openPrice: parseFloat(t.openPrice || 0),
               });
             }
           });
@@ -1832,6 +1942,7 @@
         el.totalCoinsBadge.textContent = `${state.allSymbols.length} Koin`;
       }
       renderWatchlist();
+      load24hStats(); // Immediately update 24H stats with authoritative symbols data
     }
   }
 
@@ -2210,6 +2321,7 @@
     startCandleTimer();
 
     // Parallel load
+    load24hStats();
     loadSymbols();
     await loadHistoricalData();
     connectWebSocket();
