@@ -1018,14 +1018,17 @@ html, body {
   flex: 1;
   min-height: 0;
   position: relative;
+  overflow: hidden;
 }
 
 .stoch-canvas-wrapper {
   width: 100%;
   height: 140px;
+  flex-shrink: 0;
   border-top: 1px solid var(--border-color);
   position: relative;
   background: #090c13;
+  overflow: hidden;
 }
 
 .stoch-canvas-wrapper.hidden {

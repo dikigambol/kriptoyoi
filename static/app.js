@@ -63,6 +63,7 @@
 
   // --- DOM Elements ---
   const el = {
+    splitChartsContainer: document.getElementById('splitChartsContainer'),
     chartContainer: document.getElementById('chartContainer'),
     stochRsiContainer: document.getElementById('stochRsiContainer'),
     chartLoading: document.getElementById('chartLoading'),
@@ -1039,9 +1040,25 @@
       });
     }
 
-    // Auto-resize on window change
+    // Auto-resize on window change & observe container dimensions (fixes initial layout cutoff on refresh)
     window.addEventListener('resize', resizeCharts);
+
+    if (window.ResizeObserver) {
+      const ro = new ResizeObserver(() => {
+        resizeCharts();
+      });
+      if (el.splitChartsContainer) ro.observe(el.splitChartsContainer);
+      if (el.chartContainer) ro.observe(el.chartContainer);
+      if (el.stochRsiContainer) ro.observe(el.stochRsiContainer);
+    }
+
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(() => resizeCharts());
+    }
+
     resizeCharts();
+    setTimeout(resizeCharts, 50);
+    setTimeout(resizeCharts, 200);
   }
 
   // Synchronize price scale widths across both charts so horizontal plot area lines up 1-to-1
@@ -1050,7 +1067,7 @@
     try {
       const mainWidth = state.chart.priceScale('right').width();
       const stochWidth = state.stochChart.priceScale('right').width();
-      const targetWidth = Math.max(mainWidth, stochWidth, 80);
+      const targetWidth = Math.max(mainWidth, stochWidth, 85);
       if (targetWidth > 0) {
         state.chart.priceScale('right').applyOptions({ minimumWidth: targetWidth });
         state.stochChart.priceScale('right').applyOptions({ minimumWidth: targetWidth });
@@ -1060,16 +1077,24 @@
 
   function resizeCharts() {
     if (state.chart && el.chartContainer) {
-      state.chart.applyOptions({
-        width: el.chartContainer.clientWidth,
-        height: el.chartContainer.clientHeight,
-      });
+      const w = el.chartContainer.clientWidth;
+      const h = el.chartContainer.clientHeight;
+      if (w > 0 && h > 0) {
+        state.chart.applyOptions({
+          width: w,
+          height: h,
+        });
+      }
     }
     if (state.stochChart && el.stochRsiContainer && state.showStoch) {
-      state.stochChart.applyOptions({
-        width: el.stochRsiContainer.clientWidth,
-        height: el.stochRsiContainer.clientHeight,
-      });
+      const sw = el.stochRsiContainer.clientWidth;
+      const sh = el.stochRsiContainer.clientHeight;
+      if (sw > 0 && sh > 0) {
+        state.stochChart.applyOptions({
+          width: sw,
+          height: sh,
+        });
+      }
     }
     syncPriceScaleWidths();
   }
@@ -1324,6 +1349,8 @@
       console.error('Gagal memuat klines historis:', err);
     } finally {
       el.chartLoading.classList.add('hidden');
+      resizeCharts();
+      requestAnimationFrame(resizeCharts);
     }
   }
 
