@@ -28,6 +28,7 @@
     wsReconnectTimeout: null,
     pingInterval: null,
     wsConnectionId: 0,
+    loadDataSeq: 0,
     lastCandle: null,
     candlesCache: [],
     lastPrice: 0,
@@ -47,6 +48,8 @@
     baseEma21: null,  // Committed EMA21 value from last closed candle
     currentStochK: null,
     currentStochD: null,
+    stochKMap: new Map(),
+    stochDMap: new Map(),
     showZones: true,
     currentZones: null,
     buyZoneUpperLine: null,
@@ -856,14 +859,16 @@
         rightPriceScale: {
           borderColor: '#1e283d',
           autoScale: true,
-          minimumWidth: 72,
+          minimumWidth: 80,
           scaleMargins: { top: 0.1, bottom: 0.1 },
+          alignLabels: true,
         },
         timeScale: {
           visible: false,
           barSpacing: 10,
           minBarSpacing: 4,
           rightOffset: 12,
+          shiftVisibleRangeOnNewBar: true,
         },
         handleScale: { mouseWheel: true, pinch: true },
         handleScroll: { mouseWheel: true, pressedMouseMove: true },
@@ -920,49 +925,94 @@
         title: 'OS 20',
       });
 
-      // Synchronize time scales
+      // Synchronize time scales with re-entrancy lock to prevent feedback loops and misalignment
+      let isSyncingRange = false;
       state.chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-        if (state.stochChart && range) {
+        if (isSyncingRange || !state.stochChart || !range) return;
+        isSyncingRange = true;
+        try {
           state.stochChart.timeScale().setVisibleLogicalRange(range);
-        }
-      });
-      state.stochChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-        if (state.chart && range) {
-          state.chart.timeScale().setVisibleLogicalRange(range);
-        }
+        } catch (e) { }
+        isSyncingRange = false;
       });
 
-      // Crosshair handler for stochChart
+      state.stochChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+        if (isSyncingRange || !state.chart || !range) return;
+        isSyncingRange = true;
+        try {
+          state.chart.timeScale().setVisibleLogicalRange(range);
+        } catch (e) { }
+        isSyncingRange = false;
+      });
+
+      // Crosshair handler on stochChart -> syncs vertical cursor to main chart
       state.stochChart.subscribeCrosshairMove((param) => {
         if (!param.time) {
+          if (state.chart) {
+            try { state.chart.clearCrosshairPosition(); } catch (e) { }
+          }
           updateLegendWithLatest();
           return;
         }
+
+        // Project crosshair onto main candlestick chart at the exact same timestamp
+        if (state.chart && state.candleSeries && state.lastPrice) {
+          try {
+            state.chart.setCrosshairPosition(state.lastPrice, param.time, state.candleSeries);
+          } catch (e) { }
+        }
+
         if (el.stochHoverTime) {
           el.stochHoverTime.textContent = formatTime(param.time, true);
         }
-        const kVal = param.seriesData && state.stochKSeries ? param.seriesData.get(state.stochKSeries) : null;
-        const dVal = param.seriesData && state.stochDSeries ? param.seriesData.get(state.stochDSeries) : null;
-        if (el.stochKBadgeVal && kVal) el.stochKBadgeVal.textContent = kVal.value.toFixed(1);
-        if (el.stochDBadgeVal && dVal) el.stochDBadgeVal.textContent = dVal.value.toFixed(1);
+
+        // Accurate %K and %D lookup
+        const kFromMap = state.stochKMap ? state.stochKMap.get(param.time) : null;
+        const dFromMap = state.stochDMap ? state.stochDMap.get(param.time) : null;
+        const kVal = (kFromMap !== undefined && kFromMap !== null) ? kFromMap : (param.seriesData && state.stochKSeries ? param.seriesData.get(state.stochKSeries)?.value : null);
+        const dVal = (dFromMap !== undefined && dFromMap !== null) ? dFromMap : (param.seriesData && state.stochDSeries ? param.seriesData.get(state.stochDSeries)?.value : null);
+
+        if (el.stochKBadgeVal && kVal !== null && kVal !== undefined) el.stochKBadgeVal.textContent = Number(kVal).toFixed(1);
+        if (el.stochDBadgeVal && dVal !== null && dVal !== undefined) el.stochDBadgeVal.textContent = Number(dVal).toFixed(1);
 
         if (el.legendTime) el.legendTime.textContent = formatDate(param.time);
       });
+
+      // Clear synced crosshair when mouse leaves sub-chart container
+      el.stochRsiContainer.addEventListener('mouseleave', () => {
+        if (state.chart) {
+          try { state.chart.clearCrosshairPosition(); } catch (e) { }
+        }
+      });
     }
 
-    // Crosshair legend handler
+    // Crosshair handler on main chart -> syncs vertical cursor to stochChart
     state.chart.subscribeCrosshairMove((param) => {
       if (!param.time || !param.seriesData || !param.seriesData.get(state.candleSeries)) {
+        if (state.stochChart) {
+          try { state.stochChart.clearCrosshairPosition(); } catch (e) { }
+        }
         updateLegendWithLatest();
         return;
+      }
+
+      // Project crosshair onto Stoch RSI chart at the exact same timestamp
+      if (state.stochChart && state.stochKSeries) {
+        try {
+          state.stochChart.setCrosshairPosition(50, param.time, state.stochKSeries);
+        } catch (e) { }
       }
 
       const candle = param.seriesData.get(state.candleSeries);
       const volume = param.seriesData.get(state.volumeSeries);
       const ema9 = param.seriesData.get(state.ema9Series);
       const ema21 = param.seriesData.get(state.ema21Series);
-      const stochK = state.stochKSeries ? param.seriesData.get(state.stochKSeries) : null;
-      const stochD = state.stochDSeries ? param.seriesData.get(state.stochDSeries) : null;
+
+      // Lookup exact Stoch RSI %K & %D values for this hovered candle timestamp
+      const kVal = state.stochKMap ? state.stochKMap.get(param.time) : null;
+      const dVal = state.stochDMap ? state.stochDMap.get(param.time) : null;
+      const stochK = (kVal !== undefined && kVal !== null) ? { value: kVal } : null;
+      const stochD = (dVal !== undefined && dVal !== null) ? { value: dVal } : null;
 
       if (el.stochHoverTime) {
         el.stochHoverTime.textContent = formatTime(param.time, true);
@@ -977,9 +1027,32 @@
       renderLegendData(param.time, candle, volume, ema9, ema21, stochK, stochD);
     });
 
+    // Clear synced crosshair when mouse leaves main chart container
+    if (el.chartContainer) {
+      el.chartContainer.addEventListener('mouseleave', () => {
+        if (state.stochChart) {
+          try { state.stochChart.clearCrosshairPosition(); } catch (e) { }
+        }
+      });
+    }
+
     // Auto-resize on window change
     window.addEventListener('resize', resizeCharts);
     resizeCharts();
+  }
+
+  // Synchronize price scale widths across both charts so horizontal plot area lines up 1-to-1
+  function syncPriceScaleWidths() {
+    if (!state.chart || !state.stochChart) return;
+    try {
+      const mainWidth = state.chart.priceScale('right').width();
+      const stochWidth = state.stochChart.priceScale('right').width();
+      const targetWidth = Math.max(mainWidth, stochWidth, 80);
+      if (targetWidth > 0) {
+        state.chart.priceScale('right').applyOptions({ minimumWidth: targetWidth });
+        state.stochChart.priceScale('right').applyOptions({ minimumWidth: targetWidth });
+      }
+    } catch (e) { }
   }
 
   function resizeCharts() {
@@ -995,6 +1068,7 @@
         height: el.stochRsiContainer.clientHeight,
       });
     }
+    syncPriceScaleWidths();
   }
 
   function renderLegendData(time, candle, volume, ema9, ema21, stochK, stochD) {
@@ -1049,19 +1123,29 @@
   function parseTokocryptoRawKlines(rawKlines) {
     const candles = [];
     const volumes = [];
-    for (let i = 0; i < rawKlines.length; i++) {
-      const item = rawKlines[i];
-      const timeSec = Math.floor(item[0] / 1000);
+    const seenTimes = new Set();
+
+    // Sort raw by timestamp ascending first to guarantee strictly ascending order
+    const sorted = [...rawKlines].sort((a, b) => Number(a[0]) - Number(b[0]));
+
+    for (let i = 0; i < sorted.length; i++) {
+      const item = sorted[i];
+      const timeSec = Math.floor(Number(item[0]) / 1000);
+      if (isNaN(timeSec) || seenTimes.has(timeSec)) continue;
+      seenTimes.add(timeSec);
+
       const o = parseFloat(item[1]);
       const h = parseFloat(item[2]);
       const l = parseFloat(item[3]);
       const c = parseFloat(item[4]);
       const vol = parseFloat(item[5]);
 
+      if (isNaN(o) || isNaN(h) || isNaN(l) || isNaN(c)) continue;
+
       candles.push({ time: timeSec, open: o, high: h, low: l, close: c });
       volumes.push({
         time: timeSec,
-        value: vol,
+        value: isNaN(vol) ? 0 : vol,
         color: c >= o ? 'rgba(16, 185, 129, 0.45)' : 'rgba(244, 63, 94, 0.45)',
       });
     }
@@ -1069,16 +1153,19 @@
   }
 
   // --- REST: Fetch Historical Klines ---
-  async function loadHistoricalData() {
+  async function loadHistoricalData(loadToken) {
     el.chartLoading.classList.remove('hidden');
     const cleanSym = state.symbol.toUpperCase().replace('_', '');
     let candles = [];
     let volumes = [];
 
-    // 1. Direct fetch from Tokocrypto (uses client's Indonesian IP, avoids Vercel US geo-blocking)
+    // 1. Direct fetch from Tokocrypto with 3.5s timeout (uses client's Indonesian IP)
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
       const directUrl = `https://www.tokocrypto.site/api/v3/klines?symbol=${cleanSym}&interval=${state.interval}&limit=500`;
-      const directRes = await fetch(directUrl);
+      const directRes = await fetch(directUrl, { signal: controller.signal });
+      clearTimeout(timeoutId);
       if (directRes.ok) {
         const raw = await directRes.json();
         if (Array.isArray(raw) && raw.length > 0) {
@@ -1088,7 +1175,7 @@
         }
       }
     } catch (e) {
-      console.warn('Direct fetch from Tokocrypto failed, trying backend proxy:', e);
+      console.warn('Direct fetch from Tokocrypto failed, trying backend proxy:', e.name || e);
     }
 
     // 2. Fallback: Backend proxy /api/klines
@@ -1106,9 +1193,31 @@
       }
     }
 
+    // Stale check: If another switchPair or switchInterval was triggered while we fetched, discard results
+    if (loadToken !== undefined && loadToken !== state.loadDataSeq) {
+      return;
+    }
+
     try {
+      // Deduplicate & strictly sort candles by time ascending
+      const seenTimes = new Set();
+      const cleanCandles = [];
+      const cleanVolumes = [];
+      for (let i = 0; i < candles.length; i++) {
+        const c = candles[i];
+        if (c && typeof c.time === 'number' && !isNaN(c.close) && !seenTimes.has(c.time)) {
+          seenTimes.add(c.time);
+          cleanCandles.push(c);
+          if (volumes[i]) cleanVolumes.push(volumes[i]);
+        }
+      }
+      cleanCandles.sort((a, b) => a.time - b.time);
+      cleanVolumes.sort((a, b) => a.time - b.time);
+      candles = cleanCandles;
+      volumes = cleanVolumes;
+
       if (candles.length === 0) {
-        throw new Error('Data candle kosong dari Tokocrypto');
+        throw new Error('Data candle kosong dari Tokocrypto untuk ' + state.symbol);
       }
 
       state.candlesCache = candles;
@@ -1116,7 +1225,7 @@
       state.lastCandle = { ...last, volume: volumes[volumes.length - 1]?.value || 0 };
       state.lastPrice = last.close;
 
-      // Update price scale precision
+      // Update price scale precision for the new coin
       const prec = getPrecision(last.close);
       state.candleSeries.applyOptions({
         priceFormat: {
@@ -1138,6 +1247,9 @@
 
       // Compute & Populate Stochastic RSI (14, 14, 3, 3)
       const stochData = calculateStochRSI(candles, 14, 14, 3, 3);
+      state.stochKMap = new Map(stochData.kData.map(d => [d.time, d.value]));
+      state.stochDMap = new Map(stochData.dData.map(d => [d.time, d.value]));
+
       if (state.stochKSeries && state.stochDSeries) {
         state.stochKSeries.setData(stochData.kData);
         state.stochDSeries.setData(stochData.dData);
@@ -1174,11 +1286,26 @@
         updateBuySellZones(initialZones, last.close);
       }
 
-      // Fit content for both main chart and stoch chart
-      state.chart.timeScale().fitContent();
-      if (state.stochChart) {
-        state.stochChart.timeScale().fitContent();
+      // Reset autoScale and fitContent on both charts so price axis jumps cleanly to new range
+      if (state.chart) {
+        try { state.chart.priceScale('right').applyOptions({ autoScale: true }); } catch (e) { }
+        try { state.chart.timeScale().fitContent(); } catch (e) { }
       }
+      if (state.stochChart) {
+        try { state.stochChart.priceScale('right').applyOptions({ autoScale: true }); } catch (e) { }
+        try {
+          const logicalRange = state.chart.timeScale().getVisibleLogicalRange();
+          if (logicalRange) {
+            state.stochChart.timeScale().setVisibleLogicalRange(logicalRange);
+          } else {
+            state.stochChart.timeScale().fitContent();
+          }
+        } catch (e) { }
+      }
+
+      // Synchronize price scale widths so both plot areas align 1-to-1 horizontally
+      syncPriceScaleWidths();
+      setTimeout(syncPriceScaleWidths, 80);
 
       updatePriceDisplay(last.close, null);
       updateLegendWithLatest();
@@ -1189,11 +1316,9 @@
     }
   }
 
-  // --- WebSocket Connection & Real-time Stream ---
-  function connectWebSocket() {
-    // Increment connection sequence ID to invalidate any callbacks from previous sockets
+  // --- WebSocket Disconnect & Cleanup ---
+  function disconnectWebSocket() {
     state.wsConnectionId = (state.wsConnectionId || 0) + 1;
-    const currentConnId = state.wsConnectionId;
 
     if (state.wsReconnectTimeout) {
       clearTimeout(state.wsReconnectTimeout);
@@ -1215,6 +1340,12 @@
       } catch (e) { }
       state.ws = null;
     }
+  }
+
+  // --- WebSocket Connection & Real-time Stream ---
+  function connectWebSocket() {
+    disconnectWebSocket();
+    const currentConnId = state.wsConnectionId;
 
     const symLower = state.symbol.toLowerCase();
     const interval = state.interval;
@@ -1252,8 +1383,12 @@
         if (state.wsConnectionId !== currentConnId) return;
         try {
           const message = JSON.parse(event.data);
-          const streamName = message.stream || '';
+          const streamName = (message.stream || '').toLowerCase();
           const d = message.data || message;
+
+          // Stream symbol guard: drop any messages not belonging to current active coin
+          const currentPrefix = state.symbol.toLowerCase();
+          if (streamName && !streamName.startsWith(currentPrefix)) return;
 
           if (streamName.includes('@kline')) {
             handleKlineUpdate(d);
@@ -1310,6 +1445,10 @@
   function handleKlineUpdate(payload) {
     const k = payload.k;
     if (!k || !state.candleSeries) return;
+
+    // Symbol guard: verify kline symbol matches state.symbol
+    const sym = (k.s || payload.s || '').toUpperCase();
+    if (sym && sym !== state.symbol) return;
 
     const candleTime = Math.floor(k.t / 1000);
     const o = parseFloat(k.o);
@@ -1374,12 +1513,14 @@
         const lastK = liveStoch.kData[liveStoch.kData.length - 1];
         if (state.stochKSeries) state.stochKSeries.update(lastK);
         state.currentStochK = lastK.value;
+        if (state.stochKMap) state.stochKMap.set(lastK.time, lastK.value);
         if (el.stochKBadgeVal) el.stochKBadgeVal.textContent = lastK.value.toFixed(1);
       }
       if (liveStoch.dData.length > 0) {
         const lastD = liveStoch.dData[liveStoch.dData.length - 1];
         if (state.stochDSeries) state.stochDSeries.update(lastD);
         state.currentStochD = lastD.value;
+        if (state.stochDMap) state.stochDMap.set(lastD.time, lastD.value);
         if (el.stochDBadgeVal) el.stochDBadgeVal.textContent = lastD.value.toFixed(1);
       }
       if (el.stochHoverTime) {
@@ -1395,6 +1536,9 @@
       if (state.ema21Series) state.ema21Series.setData(ema21Data);
 
       const stochData = calculateStochRSI(state.candlesCache, 14, 14, 3, 3);
+      state.stochKMap = new Map(stochData.kData.map(d => [d.time, d.value]));
+      state.stochDMap = new Map(stochData.dData.map(d => [d.time, d.value]));
+
       if (state.stochKSeries && state.stochDSeries) {
         state.stochKSeries.setData(stochData.kData);
         state.stochDSeries.setData(stochData.dData);
@@ -1435,6 +1579,11 @@
   // --- Real-time Mini Ticker (24h Stats) ---
   function handleMiniTickerUpdate(payload) {
     if (!payload) return;
+
+    // Symbol guard
+    const sym = (payload.s || '').toUpperCase();
+    if (sym && sym !== state.symbol) return;
+
     const high = parseFloat(payload.h);
     const low = parseFloat(payload.l);
     const vol = parseFloat(payload.q); // Quote asset volume
@@ -1455,6 +1604,11 @@
   // --- Real-time Trade Tape Handler ---
   function handleTradeUpdate(payload) {
     if (!payload || !payload.p) return;
+
+    // Symbol guard
+    const sym = (payload.s || '').toUpperCase();
+    if (sym && sym !== state.symbol) return;
+
     const price = parseFloat(payload.p);
     const qty = parseFloat(payload.q);
     const isBuyerMaker = payload.m; // true => sell order (taker sell), false => buy order (taker buy)
@@ -1530,21 +1684,59 @@
 
   // --- Switch Symbol or Interval ---
   async function switchPair(newSymbol) {
-    if (newSymbol === state.symbol) return;
-    state.symbol = newSymbol.toUpperCase().replace('_', '');
+    if (!newSymbol) return;
+    const formatted = newSymbol.toUpperCase().replace('_', '');
+    if (formatted === state.symbol) return;
+
+    // 1. Immediately disconnect existing WebSocket to stop receiving old coin ticks
+    disconnectWebSocket();
+
+    // 2. Assign new symbol and track request token to prevent race conditions
+    state.symbol = formatted;
+    const currentToken = ++state.loadDataSeq;
+
     updateSymbolUI();
     el.tradesList.innerHTML = '';
     clearZonePriceLines();
-    await loadHistoricalData();
+    state.currentZones = null;
+    state.scalperMarkers = [];
+    state.candlesCache = [];
+    state.lastCandle = null;
+    if (state.candleSeries) {
+      state.candleSeries.setMarkers([]);
+    }
+
+    // 3. Load historical data with token check
+    await loadHistoricalData(currentToken);
+
+    // If another pair switch started while loading, abort connection
+    if (state.loadDataSeq !== currentToken) return;
+
+    // 4. Connect WebSocket for new symbol
     connectWebSocket();
   }
 
   async function switchInterval(newInterval) {
     if (newInterval === state.interval) return;
+
+    disconnectWebSocket();
     state.interval = newInterval;
+    const currentToken = ++state.loadDataSeq;
+
     updateIntervalUI();
     clearZonePriceLines();
-    await loadHistoricalData();
+    state.currentZones = null;
+    state.scalperMarkers = [];
+    state.candlesCache = [];
+    state.lastCandle = null;
+    if (state.candleSeries) {
+      state.candleSeries.setMarkers([]);
+    }
+
+    await loadHistoricalData(currentToken);
+
+    if (state.loadDataSeq !== currentToken) return;
+
     connectWebSocket();
   }
 
@@ -1987,7 +2179,12 @@
 
     el.resetViewBtn.addEventListener('click', () => {
       if (state.chart) {
-        state.chart.timeScale().fitContent();
+        try { state.chart.priceScale('right').applyOptions({ autoScale: true }); } catch (e) { }
+        try { state.chart.timeScale().fitContent(); } catch (e) { }
+      }
+      if (state.stochChart) {
+        try { state.stochChart.priceScale('right').applyOptions({ autoScale: true }); } catch (e) { }
+        try { state.stochChart.timeScale().fitContent(); } catch (e) { }
       }
     });
 
