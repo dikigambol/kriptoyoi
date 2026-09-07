@@ -339,22 +339,74 @@
     );
   }
 
+  function parseTokocryptoRawKlines(rawKlines) {
+    const candles = [];
+    const volumes = [];
+    for (let i = 0; i < rawKlines.length; i++) {
+      const item = rawKlines[i];
+      const timeSec = Math.floor(item[0] / 1000);
+      const o = parseFloat(item[1]);
+      const h = parseFloat(item[2]);
+      const l = parseFloat(item[3]);
+      const c = parseFloat(item[4]);
+      const vol = parseFloat(item[5]);
+
+      candles.push({ time: timeSec, open: o, high: h, low: l, close: c });
+      volumes.push({
+        time: timeSec,
+        value: vol,
+        color: c >= o ? 'rgba(16, 185, 129, 0.45)' : 'rgba(244, 63, 94, 0.45)',
+      });
+    }
+    return { candles, volumes };
+  }
+
   // --- REST: Fetch Historical Klines ---
   async function loadHistoricalData() {
     el.chartLoading.classList.remove('hidden');
-    try {
-      const url = `/api/klines?symbol=${encodeURIComponent(state.symbol)}&interval=${state.interval}&limit=500`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
+    const cleanSym = state.symbol.toUpperCase().replace('_', '');
+    let candles = [];
+    let volumes = [];
 
-      if (!data.candles || data.candles.length === 0) {
+    // 1. Direct fetch from Tokocrypto (uses client's Indonesian IP, avoids Vercel US geo-blocking)
+    try {
+      const directUrl = `https://www.tokocrypto.site/api/v3/klines?symbol=${cleanSym}&interval=${state.interval}&limit=500`;
+      const directRes = await fetch(directUrl);
+      if (directRes.ok) {
+        const raw = await directRes.json();
+        if (Array.isArray(raw) && raw.length > 0) {
+          const parsed = parseTokocryptoRawKlines(raw);
+          candles = parsed.candles;
+          volumes = parsed.volumes;
+        }
+      }
+    } catch (e) {
+      console.warn('Direct fetch from Tokocrypto failed, trying backend proxy:', e);
+    }
+
+    // 2. Fallback: Backend proxy /api/klines
+    if (candles.length === 0) {
+      try {
+        const proxyUrl = `/api/klines?symbol=${encodeURIComponent(state.symbol)}&interval=${state.interval}&limit=500`;
+        const res = await fetch(proxyUrl);
+        if (res.ok) {
+          const data = await res.json();
+          candles = data.candles || [];
+          volumes = data.volumes || [];
+        }
+      } catch (err) {
+        console.error('Proxy fetch failed:', err);
+      }
+    }
+
+    try {
+      if (candles.length === 0) {
         throw new Error('Data candle kosong dari Tokocrypto');
       }
 
-      state.candlesCache = data.candles;
-      const last = data.candles[data.candles.length - 1];
-      state.lastCandle = { ...last, volume: data.volumes[data.volumes.length - 1]?.value || 0 };
+      state.candlesCache = candles;
+      const last = candles[candles.length - 1];
+      state.lastCandle = { ...last, volume: volumes[volumes.length - 1]?.value || 0 };
       state.lastPrice = last.close;
 
       // Update price scale precision
@@ -368,12 +420,12 @@
       });
 
       // Populate Series
-      state.candleSeries.setData(data.candles);
-      state.volumeSeries.setData(data.volumes);
+      state.candleSeries.setData(candles);
+      state.volumeSeries.setData(volumes);
 
       // Compute & Populate EMAs
-      const ema20Data = calculateEMA(data.candles, 20);
-      const ema50Data = calculateEMA(data.candles, 50);
+      const ema20Data = calculateEMA(candles, 20);
+      const ema50Data = calculateEMA(candles, 50);
       state.ema20Series.setData(ema20Data);
       state.ema50Series.setData(ema50Data);
 
@@ -684,18 +736,60 @@
 
   // --- Symbols Loading & Watchlist ---
   async function loadSymbols() {
+    let symbols = [];
+    // 1. Try backend proxy /api/symbols
     try {
       const res = await fetch('/api/symbols');
-      if (!res.ok) return;
-      state.allSymbols = await res.json();
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          symbols = data;
+        }
+      }
+    } catch (err) {
+      console.warn('Backend symbols fetch error:', err);
+    }
 
+    // 2. Direct client fallback if backend was geo-blocked on Vercel
+    if (symbols.length === 0) {
+      try {
+        const [exRes, tickerRes] = await Promise.all([
+          fetch('https://www.tokocrypto.site/api/v3/exchangeInfo'),
+          fetch('https://www.tokocrypto.site/api/v3/ticker/24hr')
+        ]);
+        if (exRes.ok && tickerRes.ok) {
+          const exData = await exRes.json();
+          const tickerData = await tickerRes.json();
+          const tickerMap = {};
+          tickerData.forEach(t => tickerMap[t.symbol] = t);
+
+          exData.symbols.forEach(s => {
+            if (s.status === 'TRADING') {
+              const t = tickerMap[s.symbol] || {};
+              symbols.push({
+                symbol: s.symbol,
+                baseAsset: s.baseAsset,
+                quoteAsset: s.quoteAsset,
+                lastPrice: parseFloat(t.lastPrice || 0),
+                priceChangePercent: parseFloat(t.priceChangePercent || 0),
+                quoteVolume: parseFloat(t.quoteVolume || 0),
+                volume: parseFloat(t.volume || 0),
+              });
+            }
+          });
+          symbols.sort((a, b) => (b.quoteVolume || 0) - (a.quoteVolume || 0));
+        }
+      } catch (e) {
+        console.error('Direct symbols fetch failed:', e);
+      }
+    }
+
+    if (symbols.length > 0) {
+      state.allSymbols = symbols;
       if (el.totalCoinsBadge) {
         el.totalCoinsBadge.textContent = `${state.allSymbols.length} Koin`;
       }
-
       renderWatchlist();
-    } catch (err) {
-      console.warn('Gagal memuat list symbols:', err);
     }
   }
 
