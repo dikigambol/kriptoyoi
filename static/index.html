@@ -35,47 +35,78 @@
         </div>
       </div>
 
-      <!-- Quick Pair Selector Pills -->
-      <div class="quick-pairs" id="quickPairs">
-        <button class="pair-pill active" data-symbol="BTCUSDT">BTC/USDT</button>
-        <button class="pair-pill" data-symbol="ETHUSDT">ETH/USDT</button>
-        <button class="pair-pill" data-symbol="SOLUSDT">SOL/USDT</button>
-        <button class="pair-pill" data-symbol="BNBUSDT">BNB/USDT</button>
-        <button class="pair-pill" data-symbol="XRPUSDT">XRP/USDT</button>
-        <button class="pair-pill" data-symbol="BTCBIDR">BTC/BIDR</button>
-        <button class="pair-pill" data-symbol="USDTBIDR">USDT/BIDR</button>
-      </div>
 
       <!-- Search & Status Actions -->
       <div class="header-actions">
-        <div class="search-box-wrapper">
-          <button id="searchPairBtn" class="search-trigger-btn" title="Cari Pair Kripto">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="11" cy="11" r="8"></circle>
-              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-            </svg>
-            <span id="searchBtnLabel">Cari Koin...</span>
-            <kbd class="hotkey-badge">/</kbd>
-          </button>
-          
-          <!-- Dropdown Search Modal/Menu -->
-          <div id="pairSearchDropdown" class="pair-dropdown hidden">
-            <div class="dropdown-header">
-              <input type="text" id="pairSearchInput" placeholder="Cari misal: ETH, SOL, BIDR..." autocomplete="off" />
-            </div>
-            <div class="pair-list-scroller" id="pairSearchResults">
-              <!-- Dynamically populated -->
-            </div>
-          </div>
-        </div>
+        <button id="searchPairBtn" class="coin-selector-trigger" title="Pilih Semua Koin Tokocrypto (Tekan '/')">
+          <span class="coin-trigger-icon">🪙</span>
+          <span class="coin-trigger-text" id="selectorCurrentCoin">BTC / USDT</span>
+          <span class="coin-trigger-count" id="totalCoinsBadge">1,362 Koin</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </button>
 
         <!-- Connection Status Indicator -->
         <div class="connection-status connected" id="wsStatusPill" title="Status WebSocket">
           <span class="status-indicator"></span>
-          <span class="status-text" id="wsStatusText">Terhubung</span>
+          <span class="status-text" id="wsStatusText">Live Stream</span>
         </div>
       </div>
     </header>
+
+    <!-- Full Coin Selector Modal Dialog -->
+    <div id="coinModalOverlay" class="modal-backdrop hidden">
+      <div class="modal-card" id="coinModalCard">
+        <div class="modal-header">
+          <div class="modal-title-group">
+            <span class="modal-icon">💎</span>
+            <div>
+              <h2 class="modal-title">Daftar Koin Tokocrypto</h2>
+              <p class="modal-subtitle">Pilih dari seluruh 1.300+ pasar kripto aktif</p>
+            </div>
+          </div>
+          <button id="closeModalBtn" class="modal-close-btn" title="Tutup (Esc)">✕</button>
+        </div>
+
+        <div class="modal-search-wrapper">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input type="text" id="pairSearchInput" placeholder="Cari koin atau token: PEPE, DOGE, SOL, ETH, BIDR..." autocomplete="off" />
+          <span class="clear-search-btn hidden" id="clearSearchBtn">✕</span>
+        </div>
+
+        <!-- Filter & Sorting Toolbar -->
+        <div class="modal-toolbar">
+          <div class="market-category-tabs" id="marketCategoryTabs">
+            <button class="cat-tab active" data-category="ALL">Semua</button>
+            <button class="cat-tab" data-category="USDT">USDT</button>
+            <button class="cat-tab" data-category="IDR">BIDR / IDR</button>
+            <button class="cat-tab" data-category="USDC">USDC</button>
+            <button class="cat-tab" data-category="BTC">BTC</button>
+          </div>
+
+          <div class="modal-sort-group">
+            <span class="sort-label">Urutkan:</span>
+            <select id="modalSortSelect" class="modal-sort-select">
+              <option value="volume">Volume Terbesar</option>
+              <option value="gainers">Top Gainer (+%)</option>
+              <option value="losers">Top Loser (-%)</option>
+              <option value="name">Nama (A - Z)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="modal-results-info">
+          <span id="modalResultCount">Menampilkan 0 koin</span>
+        </div>
+
+        <!-- Scrollable Coin List -->
+        <div class="modal-coin-list" id="pairSearchResults">
+          <!-- Dynamically filled with coin cards -->
+        </div>
+      </div>
+    </div>
 
     <!-- Market Ribbon / Statistics Toolbar -->
     <section class="ticker-ribbon">
@@ -202,7 +233,13 @@
         <!-- Watchlist Tab Content -->
         <div class="tab-content" id="watchlistTab">
           <div class="watchlist-search">
-            <input type="text" id="watchlistFilterInput" placeholder="Filter koin..." />
+            <input type="text" id="watchlistFilterInput" placeholder="Cari koin di pasar..." />
+            <div class="watchlist-market-tags" id="watchlistMarketTags">
+              <button class="wl-tag active" data-quote="ALL">Semua</button>
+              <button class="wl-tag" data-quote="USDT">USDT</button>
+              <button class="wl-tag" data-quote="IDR">IDR</button>
+              <button class="wl-tag" data-quote="BTC">BTC</button>
+            </div>
           </div>
           <div class="watchlist-stream-list" id="watchlistItems">
             <!-- Populated via API -->

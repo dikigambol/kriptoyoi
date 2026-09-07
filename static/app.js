@@ -11,6 +11,11 @@
     symbol: 'BTCUSDT',
     interval: '1m',
     allSymbols: [],
+    modalCategory: 'ALL',
+    modalSort: 'volume',
+    modalQuery: '',
+    watchlistQuote: 'ALL',
+    watchlistQuery: '',
     chart: null,
     candleSeries: null,
     volumeSeries: null,
@@ -18,6 +23,8 @@
     ema50Series: null,
     ws: null,
     wsReconnectTimeout: null,
+    pingInterval: null,
+    wsConnectionId: 0,
     lastCandle: null,
     candlesCache: [],
     lastPrice: 0,
@@ -46,13 +53,24 @@
     wsStatusText: document.getElementById('wsStatusText'),
     quickPairs: document.getElementById('quickPairs'),
     intervalSelector: document.getElementById('intervalSelector'),
+    // Coin Modal Trigger & Elements
     searchPairBtn: document.getElementById('searchPairBtn'),
-    pairSearchDropdown: document.getElementById('pairSearchDropdown'),
+    selectorCurrentCoin: document.getElementById('selectorCurrentCoin'),
+    totalCoinsBadge: document.getElementById('totalCoinsBadge'),
+    coinModalOverlay: document.getElementById('coinModalOverlay'),
+    coinModalCard: document.getElementById('coinModalCard'),
+    closeModalBtn: document.getElementById('closeModalBtn'),
     pairSearchInput: document.getElementById('pairSearchInput'),
+    clearSearchBtn: document.getElementById('clearSearchBtn'),
+    marketCategoryTabs: document.getElementById('marketCategoryTabs'),
+    modalSortSelect: document.getElementById('modalSortSelect'),
+    modalResultCount: document.getElementById('modalResultCount'),
     pairSearchResults: document.getElementById('pairSearchResults'),
+    // Sidebar
     tradesList: document.getElementById('tradesList'),
     watchlistItems: document.getElementById('watchlistItems'),
     watchlistFilterInput: document.getElementById('watchlistFilterInput'),
+    watchlistMarketTags: document.getElementById('watchlistMarketTags'),
     // Legend
     legendPair: document.getElementById('legendPair'),
     legendInterval: document.getElementById('legendInterval'),
@@ -636,6 +654,14 @@
     el.displaySymbol.textContent = `${base}/${quote}`;
     el.displayBaseQuote.textContent = `${quote} Market`;
 
+    if (el.selectorCurrentCoin) {
+      el.selectorCurrentCoin.textContent = `${base} / ${quote}`;
+    }
+
+    if (el.totalCoinsBadge && state.allSymbols.length > 0) {
+      el.totalCoinsBadge.textContent = `${state.allSymbols.length} Koin`;
+    }
+
     // Update active quick pills
     document.querySelectorAll('.pair-pill').forEach((pill) => {
       if (pill.dataset.symbol === state.symbol) {
@@ -656,23 +682,50 @@
     });
   }
 
-  // --- Symbols & Watchlist Loading ---
+  // --- Symbols Loading & Watchlist ---
   async function loadSymbols() {
     try {
       const res = await fetch('/api/symbols');
       if (!res.ok) return;
       state.allSymbols = await res.json();
-      renderWatchlist(state.allSymbols);
+
+      if (el.totalCoinsBadge) {
+        el.totalCoinsBadge.textContent = `${state.allSymbols.length} Koin`;
+      }
+
+      renderWatchlist();
     } catch (err) {
       console.warn('Gagal memuat list symbols:', err);
     }
   }
 
-  function renderWatchlist(list) {
+  // --- Sidebar Watchlist Rendering ---
+  function renderWatchlist() {
+    if (!el.watchlistItems) return;
     el.watchlistItems.innerHTML = '';
-    const displayList = list.slice(0, 40);
 
-    displayList.forEach((item) => {
+    const q = (state.watchlistQuery || '').toLowerCase().trim();
+    const filterQuote = state.watchlistQuote || 'ALL';
+
+    const filtered = state.allSymbols.filter((item) => {
+      // Category match
+      let matchQuote = true;
+      if (filterQuote === 'USDT') matchQuote = item.quoteAsset === 'USDT';
+      else if (filterQuote === 'IDR') matchQuote = item.quoteAsset === 'BIDR' || item.quoteAsset === 'IDR';
+      else if (filterQuote === 'BTC') matchQuote = item.quoteAsset === 'BTC';
+
+      if (!matchQuote) return false;
+
+      // Query match
+      if (q) {
+        return item.baseAsset.toLowerCase().includes(q) || item.symbol.toLowerCase().includes(q);
+      }
+      return true;
+    });
+
+    const fragment = document.createDocumentFragment();
+    // Render matching items (up to 80 for high performance in sidebar)
+    filtered.slice(0, 80).forEach((item) => {
       const div = document.createElement('div');
       div.className = `watchlist-item ${item.symbol === state.symbol ? 'active' : ''}`;
       const change = item.priceChangePercent || 0;
@@ -695,93 +748,232 @@
         div.classList.add('active');
       });
 
-      el.watchlistItems.appendChild(div);
+      fragment.appendChild(div);
     });
+
+    el.watchlistItems.appendChild(fragment);
   }
 
-  // --- Search Dropdown Logic ---
-  function setupSearch() {
-    el.searchPairBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      el.pairSearchDropdown.classList.toggle('hidden');
-      if (!el.pairSearchDropdown.classList.contains('hidden')) {
-        el.pairSearchInput.focus();
-        filterSearchResults('');
-      }
-    });
-
-    document.addEventListener('click', (e) => {
-      if (!el.pairSearchDropdown.contains(e.target) && e.target !== el.searchPairBtn) {
-        el.pairSearchDropdown.classList.add('hidden');
-      }
-    });
-
-    // Keyboard shortcut '/'
-    document.addEventListener('keydown', (e) => {
-      if (e.key === '/' && document.activeElement !== el.pairSearchInput) {
-        e.preventDefault();
-        el.pairSearchDropdown.classList.remove('hidden');
-        el.pairSearchInput.focus();
-        filterSearchResults('');
-      } else if (e.key === 'Escape') {
-        el.pairSearchDropdown.classList.add('hidden');
-      }
-    });
-
-    el.pairSearchInput.addEventListener('input', (e) => {
-      filterSearchResults(e.target.value);
-    });
-
-    el.watchlistFilterInput.addEventListener('input', (e) => {
-      const q = e.target.value.toLowerCase().trim();
-      const filtered = state.allSymbols.filter(s => s.symbol.toLowerCase().includes(q));
-      renderWatchlist(filtered);
-    });
+  // --- Full Coin Selector Modal Logic ---
+  function openCoinModal() {
+    if (!el.coinModalOverlay) return;
+    el.coinModalOverlay.classList.remove('hidden');
+    el.pairSearchInput.value = state.modalQuery || '';
+    renderModalCoins();
+    setTimeout(() => {
+      el.pairSearchInput.focus();
+    }, 50);
   }
 
-  function filterSearchResults(query) {
-    const q = query.toLowerCase().trim();
-    const filtered = state.allSymbols.filter(s => s.symbol.toLowerCase().includes(q)).slice(0, 30);
+  function closeCoinModal() {
+    if (!el.coinModalOverlay) return;
+    el.coinModalOverlay.classList.add('hidden');
+  }
 
+  function renderModalCoins() {
+    if (!el.pairSearchResults) return;
     el.pairSearchResults.innerHTML = '';
-    if (filtered.length === 0) {
-      el.pairSearchResults.innerHTML = `<div style="padding: 12px; color: var(--text-muted); text-align: center;">Tidak ditemukan</div>`;
+
+    const query = (state.modalQuery || '').toLowerCase().trim();
+    const cat = state.modalCategory || 'ALL';
+    const sort = state.modalSort || 'volume';
+
+    // 1. Filter
+    let list = state.allSymbols.filter((item) => {
+      let matchCat = true;
+      if (cat === 'USDT') matchCat = item.quoteAsset === 'USDT';
+      else if (cat === 'IDR') matchCat = item.quoteAsset === 'BIDR' || item.quoteAsset === 'IDR';
+      else if (cat === 'USDC') matchCat = item.quoteAsset === 'USDC';
+      else if (cat === 'BTC') matchCat = item.quoteAsset === 'BTC';
+
+      if (!matchCat) return false;
+
+      if (query) {
+        return item.baseAsset.toLowerCase().includes(query) || item.symbol.toLowerCase().includes(query);
+      }
+      return true;
+    });
+
+    // 2. Sort
+    if (sort === 'volume') {
+      list.sort((a, b) => (b.quoteVolume || 0) - (a.quoteVolume || 0));
+    } else if (sort === 'gainers') {
+      list.sort((a, b) => (b.priceChangePercent || 0) - (a.priceChangePercent || 0));
+    } else if (sort === 'losers') {
+      list.sort((a, b) => (a.priceChangePercent || 0) - (b.priceChangePercent || 0));
+    } else if (sort === 'name') {
+      list.sort((a, b) => a.baseAsset.localeCompare(b.baseAsset));
+    }
+
+    // 3. Update count info
+    if (el.modalResultCount) {
+      el.modalResultCount.textContent = `Menampilkan ${list.length.toLocaleString('id-ID')} koin pasar Tokocrypto`;
+    }
+
+    if (list.length === 0) {
+      el.pairSearchResults.innerHTML = `
+        <div style="padding: 40px; color: var(--text-muted); text-align: center;">
+          <div style="font-size: 2rem; margin-bottom: 8px;">🔍</div>
+          <div>Tidak ada koin yang cocok dengan pencarian "<b>${query}</b>"</div>
+        </div>
+      `;
       return;
     }
 
-    filtered.forEach((item) => {
-      const div = document.createElement('div');
-      div.className = 'pair-search-item';
+    // 4. Render cards using DocumentFragment for maximum performance
+    const fragment = document.createDocumentFragment();
+    // Render all matching coins (or first 200 for instant response)
+    const renderLimit = Math.min(list.length, 300);
+
+    for (let i = 0; i < renderLimit; i++) {
+      const item = list[i];
+      const card = document.createElement('div');
+      const isCurrent = item.symbol === state.symbol;
+      card.className = `modal-coin-card ${isCurrent ? 'current' : ''}`;
+
       const change = item.priceChangePercent || 0;
       const isPos = change >= 0;
+      const initial = (item.baseAsset || 'CO').slice(0, 2).toUpperCase();
 
-      div.innerHTML = `
-        <span class="search-item-symbol">${item.baseAsset}/${item.quoteAsset}</span>
-        <div class="search-item-stats">
-          <div>${formatPrice(item.lastPrice, item.symbol)}</div>
-          <div style="color: ${isPos ? 'var(--bull-color)' : 'var(--bear-color)'}">${isPos ? '+' : ''}${change.toFixed(2)}%</div>
+      card.innerHTML = `
+        <div class="card-coin-main">
+          <div class="coin-avatar">${initial}</div>
+          <div>
+            <span class="coin-symbol-name">${item.baseAsset}</span>
+            <span class="coin-quote-tag">/${item.quoteAsset}</span>
+          </div>
+        </div>
+        <div class="card-coin-vol">
+          Vol ${formatVolume(item.quoteVolume)}
+        </div>
+        <div class="card-coin-price">
+          ${formatPrice(item.lastPrice, item.symbol)}
+        </div>
+        <div class="card-coin-change ${isPos ? 'pos' : 'neg'}">
+          ${isPos ? '+' : ''}${change.toFixed(2)}%
         </div>
       `;
 
-      div.addEventListener('click', () => {
+      card.addEventListener('click', () => {
         switchPair(item.symbol);
-        el.pairSearchDropdown.classList.add('hidden');
-        el.pairSearchInput.value = '';
+        closeCoinModal();
       });
 
-      el.pairSearchResults.appendChild(div);
+      fragment.appendChild(card);
+    }
+
+    el.pairSearchResults.appendChild(fragment);
+  }
+
+  // --- Search & Modal Event Handlers ---
+  function setupSearch() {
+    // Open Modal button
+    if (el.searchPairBtn) {
+      el.searchPairBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openCoinModal();
+      });
+    }
+
+    // Close Modal button
+    if (el.closeModalBtn) {
+      el.closeModalBtn.addEventListener('click', closeCoinModal);
+    }
+
+    // Click outside modal card to close
+    if (el.coinModalOverlay) {
+      el.coinModalOverlay.addEventListener('click', (e) => {
+        if (e.target === el.coinModalOverlay) {
+          closeCoinModal();
+        }
+      });
+    }
+
+    // Keyboard shortcut '/' to open, 'Escape' to close
+    document.addEventListener('keydown', (e) => {
+      if (e.key === '/' && document.activeElement !== el.pairSearchInput && document.activeElement !== el.watchlistFilterInput) {
+        e.preventDefault();
+        openCoinModal();
+      } else if (e.key === 'Escape') {
+        closeCoinModal();
+      }
     });
+
+    // Search input inside modal
+    if (el.pairSearchInput) {
+      el.pairSearchInput.addEventListener('input', (e) => {
+        state.modalQuery = e.target.value;
+        if (el.clearSearchBtn) {
+          el.clearSearchBtn.classList.toggle('hidden', !state.modalQuery);
+        }
+        renderModalCoins();
+      });
+    }
+
+    if (el.clearSearchBtn) {
+      el.clearSearchBtn.addEventListener('click', () => {
+        state.modalQuery = '';
+        el.pairSearchInput.value = '';
+        el.clearSearchBtn.classList.add('hidden');
+        el.pairSearchInput.focus();
+        renderModalCoins();
+      });
+    }
+
+    // Modal Category Tabs (ALL, USDT, IDR, USDC, BTC)
+    if (el.marketCategoryTabs) {
+      el.marketCategoryTabs.addEventListener('click', (e) => {
+        const tab = e.target.closest('.cat-tab');
+        if (tab && tab.dataset.category) {
+          document.querySelectorAll('.cat-tab').forEach(t => t.classList.remove('active'));
+          tab.classList.add('active');
+          state.modalCategory = tab.dataset.category;
+          renderModalCoins();
+        }
+      });
+    }
+
+    // Modal Sort Select
+    if (el.modalSortSelect) {
+      el.modalSortSelect.addEventListener('change', (e) => {
+        state.modalSort = e.target.value;
+        renderModalCoins();
+      });
+    }
+
+    // Sidebar Watchlist Filter
+    if (el.watchlistFilterInput) {
+      el.watchlistFilterInput.addEventListener('input', (e) => {
+        state.watchlistQuery = e.target.value;
+        renderWatchlist();
+      });
+    }
+
+    // Sidebar Market Category Tags
+    if (el.watchlistMarketTags) {
+      el.watchlistMarketTags.addEventListener('click', (e) => {
+        const tag = e.target.closest('.wl-tag');
+        if (tag && tag.dataset.quote) {
+          document.querySelectorAll('.wl-tag').forEach(t => t.classList.remove('active'));
+          tag.classList.add('active');
+          state.watchlistQuote = tag.dataset.quote;
+          renderWatchlist();
+        }
+      });
+    }
   }
 
   // --- UI Event Listeners ---
   function setupEvents() {
-    // Quick pair pills
-    el.quickPairs.addEventListener('click', (e) => {
-      const pill = e.target.closest('.pair-pill');
-      if (pill && pill.dataset.symbol) {
-        switchPair(pill.dataset.symbol);
-      }
-    });
+    // Quick pair pills (if present)
+    if (el.quickPairs) {
+      el.quickPairs.addEventListener('click', (e) => {
+        const pill = e.target.closest('.pair-pill');
+        if (pill && pill.dataset.symbol) {
+          switchPair(pill.dataset.symbol);
+        }
+      });
+    }
 
     // Intervals
     el.intervalSelector.addEventListener('click', (e) => {

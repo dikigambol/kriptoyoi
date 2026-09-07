@@ -1,5 +1,6 @@
 import os
 import time
+import asyncio
 from typing import Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query, HTTPException
@@ -56,38 +57,59 @@ async def get_config():
 
 @app.get("/api/symbols")
 async def get_symbols():
-    """Fetch active trading pairs from Tokocrypto, cached for 5 minutes."""
+    """Fetch all active trading pairs from Tokocrypto (1300+ coins), cached for 3 minutes."""
     now = time.time()
-    if symbols_cache["data"] and (now - symbols_cache["last_updated"] < 300):
+    if symbols_cache["data"] and (now - symbols_cache["last_updated"] < 180):
         return symbols_cache["data"]
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(f"{BASE_REST_URL}/api/v3/ticker/24hr", headers=get_headers())
-            if resp.status_code != 200:
-                raise HTTPException(status_code=resp.status_code, detail="Failed to fetch tickers from Tokocrypto")
-            
-            data = resp.json()
-            # Filter popular and active USDT and BIDR / IDR pairs
-            filtered = []
-            for item in data:
-                symbol = item.get("symbol", "")
-                if symbol.endswith("USDT") or symbol.endswith("BIDR") or symbol.endswith("IDR"):
-                    volume = float(item.get("quoteVolume", 0) or 0)
-                    filtered.append({
-                        "symbol": symbol,
-                        "baseAsset": symbol[:-4] if symbol.endswith("USDT") or symbol.endswith("BIDR") else symbol[:-3],
-                        "quoteAsset": "USDT" if symbol.endswith("USDT") else ("BIDR" if symbol.endswith("BIDR") else "IDR"),
-                        "lastPrice": float(item.get("lastPrice", 0) or 0),
-                        "priceChangePercent": float(item.get("priceChangePercent", 0) or 0),
-                        "quoteVolume": volume,
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            # Fetch exchangeInfo (authoritative active TRADING list) and ticker24hr in parallel
+            req_ex = client.get(f"{BASE_REST_URL}/api/v3/exchangeInfo", headers=get_headers())
+            req_ticker = client.get(f"{BASE_REST_URL}/api/v3/ticker/24hr", headers=get_headers())
+            resp_ex, resp_ticker = await asyncio.gather(req_ex, req_ticker)
+
+            ticker_map = {}
+            if resp_ticker.status_code == 200:
+                for t in resp_ticker.json():
+                    ticker_map[t.get("symbol")] = t
+
+            symbols_list = []
+            if resp_ex.status_code == 200:
+                ex_data = resp_ex.json()
+                for s in ex_data.get("symbols", []):
+                    if s.get("status") == "TRADING":
+                        sym = s.get("symbol", "")
+                        t = ticker_map.get(sym, {})
+                        symbols_list.append({
+                            "symbol": sym,
+                            "baseAsset": s.get("baseAsset", ""),
+                            "quoteAsset": s.get("quoteAsset", ""),
+                            "lastPrice": float(t.get("lastPrice", 0) or 0),
+                            "priceChangePercent": float(t.get("priceChangePercent", 0) or 0),
+                            "quoteVolume": float(t.get("quoteVolume", 0) or 0),
+                            "volume": float(t.get("volume", 0) or 0),
+                        })
+
+            if not symbols_list and resp_ticker.status_code == 200:
+                # Fallback to ticker list if exchangeInfo had issues
+                for t in resp_ticker.json():
+                    sym = t.get("symbol", "")
+                    symbols_list.append({
+                        "symbol": sym,
+                        "baseAsset": sym[:-4] if sym.endswith("USDT") or sym.endswith("BIDR") else sym[:-3],
+                        "quoteAsset": "USDT" if sym.endswith("USDT") else ("BIDR" if sym.endswith("BIDR") else "IDR"),
+                        "lastPrice": float(t.get("lastPrice", 0) or 0),
+                        "priceChangePercent": float(t.get("priceChangePercent", 0) or 0),
+                        "quoteVolume": float(t.get("quoteVolume", 0) or 0),
+                        "volume": float(t.get("volume", 0) or 0),
                     })
 
             # Sort by volume descending
-            filtered.sort(key=lambda x: x["quoteVolume"], reverse=True)
-            symbols_cache["data"] = filtered
+            symbols_list.sort(key=lambda x: x["quoteVolume"], reverse=True)
+            symbols_cache["data"] = symbols_list
             symbols_cache["last_updated"] = now
-            return filtered
+            return symbols_list
     except Exception as e:
         if symbols_cache["data"]:
             return symbols_cache["data"]
