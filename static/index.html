@@ -155,11 +155,17 @@
         </div>
 
         <div class="indicator-toggles">
-          <button id="toggleEma20" class="tool-btn active" title="Toggle EMA 20 (Cyan)">
-            <span class="btn-color-dot ema20-dot"></span> EMA 20
+          <button id="toggleEma9" class="tool-btn active" title="Toggle EMA 9 (Garis Cepat - Gold)">
+            <span class="btn-color-dot ema9-dot"></span> EMA 9
           </button>
-          <button id="toggleEma50" class="tool-btn active" title="Toggle EMA 50 (Purple)">
-            <span class="btn-color-dot ema50-dot"></span> EMA 50
+          <button id="toggleEma21" class="tool-btn active" title="Toggle EMA 21 (Garis Tren - Cyan)">
+            <span class="btn-color-dot ema21-dot"></span> EMA 21
+          </button>
+          <button id="toggleStoch" class="tool-btn active" title="Toggle Sub-chart Stochastic RSI (14, 14, 3, 3)">
+            <span class="btn-color-dot stoch-dot"></span> Stoch RSI
+          </button>
+          <button id="toggleSignals" class="tool-btn active" title="Toggle Marker Sinyal Buy/Sell di Candlestick">
+            <span class="btn-color-dot signal-dot-icon"></span> Sinyal Scalp
           </button>
           <button id="toggleVolume" class="tool-btn active" title="Toggle Volume Sub-chart">
             <span class="btn-color-dot vol-dot"></span> Vol
@@ -172,6 +178,52 @@
               <path d="M3 21l7-7"></path>
             </svg>
           </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Scalper Analysis Ribbon (Metode 1: Trend & Momentum Scalper) -->
+    <section class="scalper-radar-ribbon" id="scalperRadar">
+      <div class="radar-status-block">
+        <span class="radar-badge-title">METODE 1 SCALPER:</span>
+        <div class="radar-signal-badge neutral" id="radarSignalBadge">
+          <span class="pulse-indicator"></span>
+          <span class="signal-text" id="radarSignalText">MENGANALISIS PASAR...</span>
+        </div>
+      </div>
+
+      <div class="radar-confluence-group">
+        <!-- Trend (EMA 9/21) -->
+        <div class="confluence-item">
+          <span class="cf-label">Tren (EMA 9/21)</span>
+          <span class="cf-value" id="cfTrend">--</span>
+        </div>
+
+        <!-- Stoch RSI -->
+        <div class="confluence-item">
+          <span class="cf-label">Stoch RSI (14)</span>
+          <span class="cf-value" id="cfStoch">--</span>
+        </div>
+
+        <!-- Live Order Flow Pressure Meter -->
+        <div class="confluence-item tape-pressure-item">
+          <span class="cf-label">Tekanan Beli Realtime (Tape)</span>
+          <div class="pressure-bar-wrapper">
+            <div class="pressure-fill-buy" id="pressureFillBuy" style="width: 50%;"></div>
+          </div>
+          <span class="pressure-text" id="pressureText">50% Beli</span>
+        </div>
+      </div>
+
+      <!-- Target Estimasi TP & SL -->
+      <div class="radar-targets-group">
+        <div class="target-item target-tp">
+          <span class="target-label">TP (+0.5%):</span>
+          <span class="target-val" id="radarTpVal">--</span>
+        </div>
+        <div class="target-item target-sl">
+          <span class="target-label">SL (-0.3%):</span>
+          <span class="target-val" id="radarSlVal">--</span>
         </div>
       </div>
     </section>
@@ -196,13 +248,19 @@
             <span>Vol: <b id="legendVol">--</b></span>
           </div>
           <div class="legend-indicators">
-            <span class="ema20-val">EMA 20: <b id="legendEma20">--</b></span>
-            <span class="ema50-val">EMA 50: <b id="legendEma50">--</b></span>
+            <span class="ema9-val">EMA 9: <b id="legendEma9">--</b></span>
+            <span class="ema21-val">EMA 21: <b id="legendEma21">--</b></span>
+            <span class="stoch-val">Stoch %K: <b id="legendStochK">--</b> %D: <b id="legendStochD">--</b></span>
           </div>
         </div>
 
-        <!-- Canvas Container for TradingView Lightweight Charts -->
-        <div id="chartContainer" class="chart-canvas-wrapper"></div>
+        <!-- Split Chart Canvas: Main Candlestick + StochRSI Sub-chart -->
+        <div class="split-charts-container" id="splitChartsContainer">
+          <div id="chartContainer" class="chart-canvas-wrapper"></div>
+          <div id="stochRsiContainer" class="stoch-canvas-wrapper">
+            <div class="stoch-legend-badge">Stoch RSI (14, 14, 3, 3) | <span style="color:#06b6d4">%K</span> / <span style="color:#f97316">%D</span> | Overbought 80 / Oversold 20</div>
+          </div>
+        </div>
 
         <!-- Loading Overlay -->
         <div id="chartLoading" class="chart-loading-overlay">

@@ -751,9 +751,172 @@ html, body {
   height: 7px;
   border-radius: 50%;
 }
-.ema20-dot { background: var(--accent-cyan); box-shadow: 0 0 6px var(--accent-cyan); }
-.ema50-dot { background: var(--accent-purple); box-shadow: 0 0 6px var(--accent-purple); }
+.ema9-dot { background: #f59e0b; box-shadow: 0 0 6px #f59e0b; }
+.ema21-dot { background: #06b6d4; box-shadow: 0 0 6px #06b6d4; }
+.stoch-dot { background: linear-gradient(135deg, #06b6d4 0%, #f97316 100%); box-shadow: 0 0 6px rgba(6, 182, 212, 0.5); }
+.signal-dot-icon { background: linear-gradient(135deg, #10b981 0%, #f43f5e 100%); }
 .vol-dot { background: #64748b; }
+
+/* ================= SCALPER RADAR RIBBON (METODE 1) ================= */
+.scalper-radar-ribbon {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: linear-gradient(90deg, rgba(15, 23, 42, 0.95) 0%, rgba(10, 15, 26, 0.95) 100%);
+  border-bottom: 1px solid var(--border-color);
+  gap: 16px;
+  flex-wrap: wrap;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+
+.radar-status-block {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.radar-badge-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--accent-cyan);
+  letter-spacing: 0.5px;
+}
+
+.radar-signal-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  transition: all 0.3s ease;
+}
+
+.radar-signal-badge.buy {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.6);
+  box-shadow: 0 0 16px rgba(16, 185, 129, 0.3);
+  animation: pulse-buy 2s infinite ease-in-out;
+}
+
+.radar-signal-badge.sell {
+  background: rgba(244, 63, 94, 0.2);
+  color: #fb7185;
+  border: 1px solid rgba(244, 63, 94, 0.6);
+  box-shadow: 0 0 16px rgba(244, 63, 94, 0.3);
+}
+
+.radar-signal-badge.neutral {
+  background: rgba(100, 116, 139, 0.15);
+  color: #94a3b8;
+  border: 1px solid rgba(100, 116, 139, 0.3);
+}
+
+.pulse-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 8px currentColor;
+}
+
+@keyframes pulse-buy {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.02); }
+}
+
+.radar-confluence-group {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex: 1;
+  justify-content: center;
+}
+
+.confluence-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cf-label {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.cf-value {
+  color: #fff;
+  font-weight: 700;
+}
+
+.cf-value.bull { color: var(--bull-color); }
+.cf-value.bear { color: var(--bear-color); }
+
+/* Live Order Flow Pressure Bar */
+.tape-pressure-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pressure-bar-wrapper {
+  width: 100px;
+  height: 8px;
+  background: var(--bear-color);
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+}
+
+.pressure-fill-buy {
+  height: 100%;
+  background: var(--bull-color);
+  transition: width 0.3s ease;
+}
+
+.pressure-text {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+/* Radar Targets */
+.radar-targets-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.target-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 0.74rem;
+}
+
+.target-tp {
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  color: var(--bull-color);
+}
+
+.target-sl {
+  background: rgba(244, 63, 94, 0.1);
+  border: 1px solid rgba(244, 63, 94, 0.25);
+  color: var(--bear-color);
+}
+
+.target-val {
+  font-weight: 700;
+  color: #fff;
+}
 
 /* ================= MAIN WORKSPACE ================= */
 .main-workspace {
@@ -774,9 +937,44 @@ html, body {
   border-right: 1px solid var(--border-color);
 }
 
-.chart-canvas-wrapper {
+.split-charts-container {
+  display: flex;
+  flex-direction: column;
   width: 100%;
   height: 100%;
+}
+
+.chart-canvas-wrapper {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.stoch-canvas-wrapper {
+  width: 100%;
+  height: 140px;
+  border-top: 1px solid var(--border-color);
+  position: relative;
+  background: #090c13;
+}
+
+.stoch-canvas-wrapper.hidden {
+  display: none;
+}
+
+.stoch-legend-badge {
+  position: absolute;
+  top: 6px;
+  left: 12px;
+  z-index: 5;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  background: rgba(15, 23, 42, 0.7);
+  padding: 2px 8px;
+  border-radius: 4px;
+  pointer-events: none;
 }
 
 /* Legend Overlay */

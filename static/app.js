@@ -19,8 +19,11 @@
     chart: null,
     candleSeries: null,
     volumeSeries: null,
-    ema20Series: null,
-    ema50Series: null,
+    ema9Series: null,
+    ema21Series: null,
+    stochChart: null,
+    stochKSeries: null,
+    stochDSeries: null,
     ws: null,
     wsReconnectTimeout: null,
     pingInterval: null,
@@ -30,15 +33,24 @@
     lastPrice: 0,
     candleCloseTime: 0,
     timerInterval: null,
-    showEma20: true,
-    showEma50: true,
+    showEma9: true,
+    showEma21: true,
+    showStoch: true,
+    showSignals: true,
     showVolume: true,
     recentTrades: [],
+    recentTradesBuffer: [],
+    scalperMarkers: [],
+    currentEma9: null,
+    currentEma21: null,
+    currentStochK: null,
+    currentStochD: null,
   };
 
   // --- DOM Elements ---
   const el = {
     chartContainer: document.getElementById('chartContainer'),
+    stochRsiContainer: document.getElementById('stochRsiContainer'),
     chartLoading: document.getElementById('chartLoading'),
     displaySymbol: document.getElementById('displaySymbol'),
     displayBaseQuote: document.getElementById('displayBaseQuote'),
@@ -53,6 +65,15 @@
     wsStatusText: document.getElementById('wsStatusText'),
     quickPairs: document.getElementById('quickPairs'),
     intervalSelector: document.getElementById('intervalSelector'),
+    // Scalper Radar Elements
+    radarSignalBadge: document.getElementById('radarSignalBadge'),
+    radarSignalText: document.getElementById('radarSignalText'),
+    cfTrend: document.getElementById('cfTrend'),
+    cfStoch: document.getElementById('cfStoch'),
+    pressureFillBuy: document.getElementById('pressureFillBuy'),
+    pressureText: document.getElementById('pressureText'),
+    radarTpVal: document.getElementById('radarTpVal'),
+    radarSlVal: document.getElementById('radarSlVal'),
     // Coin Modal Trigger & Elements
     searchPairBtn: document.getElementById('searchPairBtn'),
     selectorCurrentCoin: document.getElementById('selectorCurrentCoin'),
@@ -81,11 +102,15 @@
     legendClose: document.getElementById('legendClose'),
     legendDiff: document.getElementById('legendDiff'),
     legendVol: document.getElementById('legendVol'),
-    legendEma20: document.getElementById('legendEma20'),
-    legendEma50: document.getElementById('legendEma50'),
+    legendEma9: document.getElementById('legendEma9'),
+    legendEma21: document.getElementById('legendEma21'),
+    legendStochK: document.getElementById('legendStochK'),
+    legendStochD: document.getElementById('legendStochD'),
     // Toggles
-    toggleEma20: document.getElementById('toggleEma20'),
-    toggleEma50: document.getElementById('toggleEma50'),
+    toggleEma9: document.getElementById('toggleEma9'),
+    toggleEma21: document.getElementById('toggleEma21'),
+    toggleStoch: document.getElementById('toggleStoch'),
+    toggleSignals: document.getElementById('toggleSignals'),
     toggleVolume: document.getElementById('toggleVolume'),
     resetViewBtn: document.getElementById('resetViewBtn'),
   };
@@ -157,7 +182,6 @@
     const k = 2 / (period + 1);
     let ema = 0;
 
-    // First EMA starts with Simple Moving Average of initial 'period' bars
     const initialSlice = data.slice(0, period);
     if (initialSlice.length < period) return results;
 
@@ -175,65 +199,276 @@
     return results;
   }
 
-  // --- TradingView Chart Initialization ---
+  // --- Stochastic RSI Calculation (14, 14, 3, 3) ---
+  function calculateStochRSI(candles, rsiPeriod = 14, stochPeriod = 14, kPeriod = 3, dPeriod = 3) {
+    if (!candles || candles.length < rsiPeriod + stochPeriod + kPeriod) {
+      return { kData: [], dData: [] };
+    }
+
+    // 1. Calculate standard RSI
+    const rsiValues = [];
+    let gains = 0, losses = 0;
+
+    for (let i = 1; i <= rsiPeriod; i++) {
+      const diff = candles[i].close - candles[i - 1].close;
+      if (diff >= 0) gains += diff;
+      else losses -= diff;
+    }
+
+    let avgGain = gains / rsiPeriod;
+    let avgLoss = losses / rsiPeriod;
+    let rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+    rsiValues.push({ time: candles[rsiPeriod].time, rsi: 100 - (100 / (1 + rs)) });
+
+    for (let i = rsiPeriod + 1; i < candles.length; i++) {
+      const diff = candles[i].close - candles[i - 1].close;
+      const gain = diff >= 0 ? diff : 0;
+      const loss = diff < 0 ? -diff : 0;
+
+      avgGain = (avgGain * (rsiPeriod - 1) + gain) / rsiPeriod;
+      avgLoss = (avgLoss * (rsiPeriod - 1) + loss) / rsiPeriod;
+      rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+      rsiValues.push({ time: candles[i].time, rsi: 100 - (100 / (1 + rs)) });
+    }
+
+    // 2. Raw StochRSI = (RSI - MinRSI) / (MaxRSI - MinRSI) * 100
+    const rawStoch = [];
+    for (let i = stochPeriod - 1; i < rsiValues.length; i++) {
+      const slice = rsiValues.slice(i - stochPeriod + 1, i + 1).map(x => x.rsi);
+      const minRsi = Math.min(...slice);
+      const maxRsi = Math.max(...slice);
+      const currRsi = rsiValues[i].rsi;
+      let stoch = maxRsi === minRsi ? 50 : ((currRsi - minRsi) / (maxRsi - minRsi)) * 100;
+      rawStoch.push({ time: rsiValues[i].time, val: stoch });
+    }
+
+    // 3. Smooth with kPeriod SMA -> %K (Cyan)
+    const kData = [];
+    for (let i = kPeriod - 1; i < rawStoch.length; i++) {
+      const slice = rawStoch.slice(i - kPeriod + 1, i + 1).map(x => x.val);
+      const avgK = slice.reduce((a, b) => a + b, 0) / kPeriod;
+      kData.push({ time: rawStoch[i].time, value: parseFloat(avgK.toFixed(2)) });
+    }
+
+    // 4. Smooth with dPeriod SMA -> %D (Orange)
+    const dData = [];
+    for (let i = dPeriod - 1; i < kData.length; i++) {
+      const slice = kData.slice(i - dPeriod + 1, i + 1).map(x => x.value);
+      const avgD = slice.reduce((a, b) => a + b, 0) / dPeriod;
+      dData.push({ time: kData[i].time, value: parseFloat(avgD.toFixed(2)) });
+    }
+
+    return { kData, dData };
+  }
+
+  // --- Scalper Signal Generator (Metode 1: Trend & Momentum) ---
+  function generateScalperSignals(candles, ema9Data, ema21Data, stochKData, stochDData) {
+    const markers = [];
+    if (!candles || candles.length < 5) return markers;
+
+    const ema9Map = new Map(ema9Data.map(d => [d.time, d.value]));
+    const ema21Map = new Map(ema21Data.map(d => [d.time, d.value]));
+    const stochKMap = new Map(stochKData.map(d => [d.time, d.value]));
+    const stochDMap = new Map(stochDData.map(d => [d.time, d.value]));
+
+    for (let i = 2; i < candles.length; i++) {
+      const c = candles[i];
+      const prevC = candles[i - 1];
+      const e9 = ema9Map.get(c.time);
+      const e21 = ema21Map.get(c.time);
+      const k = stochKMap.get(c.time);
+      const d = stochDMap.get(c.time);
+      const prevK = stochKMap.get(prevC.time);
+      const prevD = stochDMap.get(prevC.time);
+
+      if (!e9 || !e21 || k === undefined || d === undefined || prevK === undefined || prevD === undefined) {
+        continue;
+      }
+
+      // BUY SIGNAL CONDITION:
+      // 1. Tren Mikro Bullish: EMA 9 >= EMA 21 & Candle Close >= EMA 9
+      // 2. Momentum Trigger: StochRSI K cross up D dari area oversold/rebound (< 40)
+      const isBullTrend = e9 >= e21 && c.close >= e9;
+      const isStochCrossUp = prevK <= prevD && k > d && (prevK <= 35 || k <= 42);
+
+      if (isBullTrend && isStochCrossUp) {
+        markers.push({
+          time: c.time,
+          position: 'belowBar',
+          color: '#10b981',
+          shape: 'arrowUp',
+          text: 'BUY',
+          size: 1.2,
+        });
+        continue;
+      }
+
+      // EXIT / SELL CONDITION:
+      // 1. StochRSI overbought (> 78) dan cross down D
+      // 2. ATAU Candle tembus ke bawah EMA 9 setelah sebelumnya di atas
+      const isStochCrossDown = prevK >= prevD && k < d && prevK >= 78;
+      const isTrendBreak = c.close < e9 && prevC.close >= e9;
+
+      if (isStochCrossDown || isTrendBreak) {
+        markers.push({
+          time: c.time,
+          position: 'aboveBar',
+          color: '#f43f5e',
+          shape: 'arrowDown',
+          text: isStochCrossDown ? 'TP/EXIT' : 'CUT',
+          size: 1.1,
+        });
+      }
+    }
+    return markers;
+  }
+
+  // --- Scalper Radar Analysis Display ---
+  function updateScalperRadar(candle, e9, e21, k, d) {
+    if (!candle) return;
+    const price = candle.close;
+
+    // 1. Evaluasi Tren (EMA 9 vs EMA 21)
+    let isBull = false;
+    if (e9 && e21) {
+      isBull = e9 >= e21 && price >= e9;
+      if (el.cfTrend) {
+        el.cfTrend.textContent = isBull ? 'Bullish (EMA 9 > 21)' : 'Bearish / Melemah';
+        el.cfTrend.className = `cf-value ${isBull ? 'bull' : 'bear'}`;
+      }
+    }
+
+    // 2. Evaluasi Stoch RSI
+    let isStochOversold = false;
+    let isStochOverbought = false;
+    if (k !== undefined && d !== undefined) {
+      isStochOversold = k <= 30;
+      isStochOverbought = k >= 78;
+      if (el.cfStoch) {
+        let stochStatus = 'Netral';
+        if (isStochOversold) stochStatus = 'Oversold (Jenuh Jual)';
+        else if (isStochOverbought) stochStatus = 'Overbought (Jenuh Beli)';
+        el.cfStoch.textContent = `K: ${k.toFixed(1)} | D: ${d.toFixed(1)} (${stochStatus})`;
+        el.cfStoch.className = `cf-value ${isStochOversold ? 'bull' : (isStochOverbought ? 'bear' : '')}`;
+      }
+    }
+
+    // 3. Evaluasi Status Sinyal Radar
+    if (el.radarSignalBadge && el.radarSignalText) {
+      if (isBull && (isStochOversold || (k && d && k > d && k < 45))) {
+        el.radarSignalBadge.className = 'radar-signal-badge buy';
+        el.radarSignalText.textContent = '🟢 BUY SETUP AKTIF (Scalp Entry)';
+      } else if (isStochOverbought || (e9 && price < e9)) {
+        el.radarSignalBadge.className = 'radar-signal-badge sell';
+        el.radarSignalText.textContent = isStochOverbought ? '🔴 Jenuh Beli (Pertimbangkan TP)' : '🔴 Tren Melemah / Exit';
+      } else {
+        el.radarSignalBadge.className = 'radar-signal-badge neutral';
+        el.radarSignalText.textContent = '⚪ TUNGGU KONFIRMASI (Wait / Neutral)';
+      }
+    }
+
+    // 4. Kalkulasi Estimasi Target TP (+0.5%) & SL (-0.3%)
+    if (price > 0) {
+      const tpPrice = price * 1.005; // +0.5%
+      const slPrice = e21 && e21 < price ? e21 * 0.998 : price * 0.997; // -0.3% atau di bawah EMA 21
+      if (el.radarTpVal) el.radarTpVal.textContent = formatPrice(tpPrice, state.symbol);
+      if (el.radarSlVal) el.radarSlVal.textContent = formatPrice(slPrice, state.symbol);
+    }
+  }
+
+  // --- Real-time Order Flow Pressure Update ---
+  function updateLiveOrderFlowPressure() {
+    let buyVol = 0;
+    let sellVol = 0;
+    for (const t of state.recentTradesBuffer) {
+      if (t.side === 'buy') buyVol += t.qty;
+      else sellVol += t.qty;
+    }
+    const total = buyVol + sellVol;
+    const buyPct = total > 0 ? Math.round((buyVol / total) * 100) : 50;
+    const sellPct = 100 - buyPct;
+
+    if (el.pressureFillBuy) {
+      el.pressureFillBuy.style.width = `${buyPct}%`;
+    }
+    if (el.pressureText) {
+      el.pressureText.textContent = `${buyPct}% Beli | ${sellPct}% Jual`;
+      el.pressureText.style.color = buyPct >= 55 ? 'var(--bull-color)' : (buyPct <= 45 ? 'var(--bear-color)' : 'var(--text-secondary)');
+    }
+  }
+
+  // --- TradingView Chart Initialization (Main Chart + StochRSI Sub-chart) ---
   function initChart() {
     if (!window.LightweightCharts) {
       console.error('TradingView LightweightCharts library not found!');
       return;
     }
 
-    // Clean previous chart if any
+    // Clean previous charts if any
     if (state.chart) {
       state.chart.remove();
       state.chart = null;
     }
+    if (state.stochChart) {
+      state.stochChart.remove();
+      state.stochChart = null;
+    }
 
+    const commonLayout = {
+      background: { type: 'solid', color: '#0a0d14' },
+      textColor: '#94a3b8',
+      fontSize: 11,
+      fontFamily: "'JetBrains Mono', 'Inter', monospace",
+    };
+
+    const commonGrid = {
+      vertLines: { color: 'rgba(255, 255, 255, 0.04)' },
+      horzLines: { color: 'rgba(255, 255, 255, 0.04)' },
+    };
+
+    const commonCrosshair = {
+      mode: LightweightCharts.CrosshairMode.Normal,
+      vertLine: {
+        color: 'rgba(96, 165, 250, 0.5)',
+        width: 1,
+        style: LightweightCharts.LineStyle.Dashed,
+        labelBackgroundColor: '#1e293b',
+      },
+      horzLine: {
+        color: 'rgba(96, 165, 250, 0.5)',
+        width: 1,
+        style: LightweightCharts.LineStyle.Dashed,
+        labelBackgroundColor: '#1e293b',
+      },
+    };
+
+    const commonLocalization = {
+      locale: 'id-ID',
+      dateFormat: 'dd MMM yyyy',
+      timeFormatter: (timestamp) => {
+        const d = new Date(timestamp * 1000);
+        return d.toLocaleTimeString('id-ID', {
+          timeZone: 'Asia/Jakarta',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false,
+        }) + ' WIB';
+      },
+    };
+
+    // 1. MAIN CHART (Candles + Volume + EMA 9 & 21)
     const chartOptions = {
-      localization: {
-        locale: 'id-ID',
-        dateFormat: 'dd MMM yyyy',
-        timeFormatter: (timestamp) => {
-          const d = new Date(timestamp * 1000);
-          return d.toLocaleTimeString('id-ID', {
-            timeZone: 'Asia/Jakarta',
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
-            hour12: false,
-          }) + ' WIB';
-        },
-      },
-      layout: {
-        background: { type: 'solid', color: '#0a0d14' },
-        textColor: '#94a3b8',
-        fontSize: 11,
-        fontFamily: "'JetBrains Mono', 'Inter', monospace",
-      },
-      grid: {
-        vertLines: { color: 'rgba(255, 255, 255, 0.04)' },
-        horzLines: { color: 'rgba(255, 255, 255, 0.04)' },
-      },
-      crosshair: {
-        mode: LightweightCharts.CrosshairMode.Normal,
-        vertLine: {
-          color: 'rgba(96, 165, 250, 0.5)',
-          width: 1,
-          style: LightweightCharts.LineStyle.Dashed,
-          labelBackgroundColor: '#1e293b',
-        },
-        horzLine: {
-          color: 'rgba(96, 165, 250, 0.5)',
-          width: 1,
-          style: LightweightCharts.LineStyle.Dashed,
-          labelBackgroundColor: '#1e293b',
-        },
-      },
+      localization: commonLocalization,
+      layout: commonLayout,
+      grid: commonGrid,
+      crosshair: commonCrosshair,
       rightPriceScale: {
         borderColor: '#1e283d',
         autoScale: true,
         scaleMargins: {
           top: 0.12,
-          bottom: 0.22, // Space for volume bars
+          bottom: 0.22,
         },
         alignLabels: true,
       },
@@ -274,7 +509,7 @@
 
     state.chart = LightweightCharts.createChart(el.chartContainer, chartOptions);
 
-    // 1. Candlestick Series
+    // Candlestick Series
     state.candleSeries = state.chart.addCandlestickSeries({
       upColor: '#10b981',
       downColor: '#f43f5e',
@@ -288,35 +523,108 @@
       },
     });
 
-    // 2. Volume Series (Histogram at bottom)
+    // Volume Series
     state.volumeSeries = state.chart.addHistogramSeries({
-      priceFormat: {
-        type: 'volume',
-      },
-      priceScaleId: '', // Overlay over same chart
-      scaleMargins: {
-        top: 0.78,
-        bottom: 0,
-      },
+      priceFormat: { type: 'volume' },
+      priceScaleId: '',
+      scaleMargins: { top: 0.78, bottom: 0 },
     });
 
-    // 3. EMA 20 Series (Cyan)
-    state.ema20Series = state.chart.addLineSeries({
+    // EMA 9 Series (Gold - Garis Cepat)
+    state.ema9Series = state.chart.addLineSeries({
+      color: '#f59e0b',
+      lineWidth: 2,
+      priceLineVisible: false,
+      lastValueVisible: true,
+      crosshairMarkerVisible: true,
+      title: 'EMA 9',
+    });
+
+    // EMA 21 Series (Cyan - Garis Tren)
+    state.ema21Series = state.chart.addLineSeries({
       color: '#06b6d4',
-      lineWidth: 1.5,
+      lineWidth: 2,
       priceLineVisible: false,
       lastValueVisible: true,
       crosshairMarkerVisible: true,
+      title: 'EMA 21',
     });
 
-    // 4. EMA 50 Series (Purple)
-    state.ema50Series = state.chart.addLineSeries({
-      color: '#a855f7',
-      lineWidth: 1.5,
-      priceLineVisible: false,
-      lastValueVisible: true,
-      crosshairMarkerVisible: true,
-    });
+    // 2. STOCHASTIC RSI SUB-CHART (Panel Bawah)
+    if (el.stochRsiContainer) {
+      const stochOptions = {
+        localization: commonLocalization,
+        layout: {
+          background: { type: 'solid', color: '#090c13' },
+          textColor: '#64748b',
+          fontSize: 10,
+          fontFamily: "'JetBrains Mono', 'Inter', monospace",
+        },
+        grid: commonGrid,
+        crosshair: commonCrosshair,
+        rightPriceScale: {
+          borderColor: '#1e283d',
+          autoScale: false,
+          scaleMargins: { top: 0.1, bottom: 0.1 },
+        },
+        timeScale: {
+          visible: false,
+        },
+        handleScale: { mouseWheel: true, pinch: true },
+        handleScroll: { mouseWheel: true, pressedMouseMove: true },
+      };
+
+      state.stochChart = LightweightCharts.createChart(el.stochRsiContainer, stochOptions);
+
+      // %K Line (Cyan)
+      state.stochKSeries = state.stochChart.addLineSeries({
+        color: '#06b6d4',
+        lineWidth: 1.5,
+        priceLineVisible: false,
+        lastValueVisible: true,
+        title: '%K',
+      });
+
+      // %D Line (Orange)
+      state.stochDSeries = state.stochChart.addLineSeries({
+        color: '#f97316',
+        lineWidth: 1.5,
+        priceLineVisible: false,
+        lastValueVisible: true,
+        title: '%D',
+      });
+
+      // Overbought 80 & Oversold 20 threshold lines
+      state.stochKSeries.createPriceLine({
+        price: 80,
+        color: 'rgba(244, 63, 94, 0.7)',
+        lineWidth: 1,
+        lineStyle: LightweightCharts.LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: 'OB 80',
+      });
+
+      state.stochKSeries.createPriceLine({
+        price: 20,
+        color: 'rgba(16, 185, 129, 0.7)',
+        lineWidth: 1,
+        lineStyle: LightweightCharts.LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: 'OS 20',
+      });
+
+      // Synchronize time scales
+      state.chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+        if (state.stochChart && range) {
+          state.stochChart.timeScale().setVisibleLogicalRange(range);
+        }
+      });
+      state.stochChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+        if (state.chart && range) {
+          state.chart.timeScale().setVisibleLogicalRange(range);
+        }
+      });
+    }
 
     // Crosshair legend handler
     state.chart.subscribeCrosshairMove((param) => {
@@ -327,30 +635,35 @@
 
       const candle = param.seriesData.get(state.candleSeries);
       const volume = param.seriesData.get(state.volumeSeries);
-      const ema20 = param.seriesData.get(state.ema20Series);
-      const ema50 = param.seriesData.get(state.ema50Series);
+      const ema9 = param.seriesData.get(state.ema9Series);
+      const ema21 = param.seriesData.get(state.ema21Series);
+      const stochK = state.stochKSeries ? param.seriesData.get(state.stochKSeries) : null;
+      const stochD = state.stochDSeries ? param.seriesData.get(state.stochDSeries) : null;
 
-      renderLegendData(param.time, candle, volume, ema20, ema50);
+      renderLegendData(param.time, candle, volume, ema9, ema21, stochK, stochD);
     });
 
     // Auto-resize on window change
-    window.addEventListener('resize', () => {
-      if (state.chart && el.chartContainer) {
-        state.chart.applyOptions({
-          width: el.chartContainer.clientWidth,
-          height: el.chartContainer.clientHeight,
-        });
-      }
-    });
-
-    // Initial size
-    state.chart.applyOptions({
-      width: el.chartContainer.clientWidth,
-      height: el.chartContainer.clientHeight,
-    });
+    window.addEventListener('resize', resizeCharts);
+    resizeCharts();
   }
 
-  function renderLegendData(time, candle, volume, ema20, ema50) {
+  function resizeCharts() {
+    if (state.chart && el.chartContainer) {
+      state.chart.applyOptions({
+        width: el.chartContainer.clientWidth,
+        height: el.chartContainer.clientHeight,
+      });
+    }
+    if (state.stochChart && el.stochRsiContainer && state.showStoch) {
+      state.stochChart.applyOptions({
+        width: el.stochRsiContainer.clientWidth,
+        height: el.stochRsiContainer.clientHeight,
+      });
+    }
+  }
+
+  function renderLegendData(time, candle, volume, ema9, ema21, stochK, stochD) {
     el.legendPair.textContent = state.symbol;
     el.legendInterval.textContent = state.interval;
     el.legendTime.textContent = formatDate(time);
@@ -371,8 +684,10 @@
       el.legendVol.textContent = formatVolume(volume.value);
     }
 
-    el.legendEma20.textContent = ema20 ? formatPrice(ema20.value, state.symbol) : '--';
-    el.legendEma50.textContent = ema50 ? formatPrice(ema50.value, state.symbol) : '--';
+    if (el.legendEma9) el.legendEma9.textContent = ema9 ? formatPrice(ema9.value, state.symbol) : '--';
+    if (el.legendEma21) el.legendEma21.textContent = ema21 ? formatPrice(ema21.value, state.symbol) : '--';
+    if (el.legendStochK) el.legendStochK.textContent = stochK ? stochK.value.toFixed(1) : '--';
+    if (el.legendStochD) el.legendStochD.textContent = stochD ? stochD.value.toFixed(1) : '--';
   }
 
   function updateLegendWithLatest() {
@@ -381,8 +696,10 @@
       state.lastCandle.time,
       state.lastCandle,
       { value: state.lastCandle.volume },
-      null,
-      null
+      state.currentEma9 !== null ? { value: state.currentEma9 } : null,
+      state.currentEma21 !== null ? { value: state.currentEma21 } : null,
+      state.currentStochK !== null ? { value: state.currentStochK } : null,
+      state.currentStochD !== null ? { value: state.currentStochD } : null
     );
   }
 
@@ -470,14 +787,44 @@
       state.candleSeries.setData(candles);
       state.volumeSeries.setData(volumes);
 
-      // Compute & Populate EMAs
-      const ema20Data = calculateEMA(candles, 20);
-      const ema50Data = calculateEMA(candles, 50);
-      state.ema20Series.setData(ema20Data);
-      state.ema50Series.setData(ema50Data);
+      // Compute & Populate EMA 9 & EMA 21 (Metode 1: Trend Ribbon)
+      const ema9Data = calculateEMA(candles, 9);
+      const ema21Data = calculateEMA(candles, 21);
+      if (state.ema9Series) state.ema9Series.setData(ema9Data);
+      if (state.ema21Series) state.ema21Series.setData(ema21Data);
 
-      // Fit content
+      // Compute & Populate Stochastic RSI (14, 14, 3, 3)
+      const stochData = calculateStochRSI(candles, 14, 14, 3, 3);
+      if (state.stochKSeries && state.stochDSeries) {
+        state.stochKSeries.setData(stochData.kData);
+        state.stochDSeries.setData(stochData.dData);
+      }
+
+      // Generate Scalper Signals (Buy/Exit Markers on Candlestick Chart)
+      state.scalperMarkers = generateScalperSignals(candles, ema9Data, ema21Data, stochData.kData, stochData.dData);
+      if (state.candleSeries) {
+        state.candleSeries.setMarkers(state.showSignals ? state.scalperMarkers : []);
+      }
+
+      // Track latest indicator values
+      const lastE9 = ema9Data.length > 0 ? ema9Data[ema9Data.length - 1].value : null;
+      const lastE21 = ema21Data.length > 0 ? ema21Data[ema21Data.length - 1].value : null;
+      const lastK = stochData.kData.length > 0 ? stochData.kData[stochData.kData.length - 1].value : null;
+      const lastD = stochData.dData.length > 0 ? stochData.dData[stochData.dData.length - 1].value : null;
+
+      state.currentEma9 = lastE9;
+      state.currentEma21 = lastE21;
+      state.currentStochK = lastK;
+      state.currentStochD = lastD;
+
+      // Update Scalper Radar Ribbon (Metode 1)
+      updateScalperRadar(last, lastE9, lastE21, lastK, lastD);
+
+      // Fit content for both main chart and stoch chart
       state.chart.timeScale().fitContent();
+      if (state.stochChart) {
+        state.stochChart.timeScale().fitContent();
+      }
 
       updatePriceDisplay(last.close, null);
       updateLegendWithLatest();
@@ -616,6 +963,7 @@
     const l = parseFloat(k.l);
     const c = parseFloat(k.c);
     const vol = parseFloat(k.v);
+    const isClosed = k.x; // true jika candle 1m/interval ini sudah close
 
     const candleBar = {
       time: candleTime,
@@ -631,12 +979,65 @@
       color: c >= o ? 'rgba(16, 185, 129, 0.45)' : 'rgba(244, 63, 94, 0.45)',
     };
 
-    // Update current running bar in TradingView Series
+    // Update bar di TradingView chart
     state.candleSeries.update(candleBar);
     state.volumeSeries.update(volumeBar);
 
     state.lastCandle = { ...candleBar, volume: vol };
-    state.candleCloseTime = k.T; // Ms
+    state.candleCloseTime = k.T; // Ms close time
+
+    // Maintain running candles cache
+    if (state.candlesCache && state.candlesCache.length > 0) {
+      const lastIdx = state.candlesCache.length - 1;
+      if (state.candlesCache[lastIdx].time === candleTime) {
+        state.candlesCache[lastIdx] = candleBar;
+      } else {
+        state.candlesCache.push(candleBar);
+        if (state.candlesCache.length > 500) state.candlesCache.shift();
+      }
+    }
+
+    // Dynamic Live Recalculation of EMA 9 & EMA 21
+    if (state.currentEma9 !== null) {
+      const k9 = 2 / (9 + 1);
+      const liveEma9 = (c - state.currentEma9) * k9 + state.currentEma9;
+      if (state.ema9Series) state.ema9Series.update({ time: candleTime, value: liveEma9 });
+      state.currentEma9 = liveEma9;
+    }
+
+    if (state.currentEma21 !== null) {
+      const k21 = 2 / (21 + 1);
+      const liveEma21 = (c - state.currentEma21) * k21 + state.currentEma21;
+      if (state.ema21Series) state.ema21Series.update({ time: candleTime, value: liveEma21 });
+      state.currentEma21 = liveEma21;
+    }
+
+    // Jika candle close: sinkronisasi penuh indikator & perbarui sinyal marker
+    if (isClosed && state.candlesCache && state.candlesCache.length >= 25) {
+      const ema9Data = calculateEMA(state.candlesCache, 9);
+      const ema21Data = calculateEMA(state.candlesCache, 21);
+      if (state.ema9Series) state.ema9Series.setData(ema9Data);
+      if (state.ema21Series) state.ema21Series.setData(ema21Data);
+
+      const stochData = calculateStochRSI(state.candlesCache, 14, 14, 3, 3);
+      if (state.stochKSeries && state.stochDSeries) {
+        state.stochKSeries.setData(stochData.kData);
+        state.stochDSeries.setData(stochData.dData);
+      }
+
+      state.scalperMarkers = generateScalperSignals(state.candlesCache, ema9Data, ema21Data, stochData.kData, stochData.dData);
+      if (state.candleSeries) {
+        state.candleSeries.setMarkers(state.showSignals ? state.scalperMarkers : []);
+      }
+
+      if (ema9Data.length > 0) state.currentEma9 = ema9Data[ema9Data.length - 1].value;
+      if (ema21Data.length > 0) state.currentEma21 = ema21Data[ema21Data.length - 1].value;
+      if (stochData.kData.length > 0) state.currentStochK = stochData.kData[stochData.kData.length - 1].value;
+      if (stochData.dData.length > 0) state.currentStochD = stochData.dData[stochData.dData.length - 1].value;
+    }
+
+    // Perbarui Radar Scalper (Metode 1) secara real-time
+    updateScalperRadar(candleBar, state.currentEma9, state.currentEma21, state.currentStochK, state.currentStochD);
 
     updatePriceDisplay(c, state.lastPrice);
     state.lastPrice = c;
@@ -668,9 +1069,21 @@
     if (!payload || !payload.p) return;
     const price = parseFloat(payload.p);
     const qty = parseFloat(payload.q);
-    const isBuyerMaker = payload.m; // true => sell order, false => buy order
+    const isBuyerMaker = payload.m; // true => sell order (taker sell), false => buy order (taker buy)
     const side = isBuyerMaker ? 'sell' : 'buy';
-    const time = payload.T ? formatTime(Math.floor(payload.T / 1000)) : formatTime(Date.now() / 1000);
+    const timestampMs = payload.T || Date.now();
+    const time = formatTime(Math.floor(timestampMs / 1000));
+
+    // Order flow buffer untuk Live Pressure meter (jendela 60 detik terakhir)
+    state.recentTradesBuffer.push({
+      time: timestampMs,
+      side: side,
+      qty: qty * price, // Notional volume dalam mata uang kuotasi
+    });
+
+    const cutoff = Date.now() - 60000;
+    state.recentTradesBuffer = state.recentTradesBuffer.filter(t => t.time >= cutoff);
+    updateLiveOrderFlowPressure();
 
     const row = document.createElement('div');
     row.className = `trade-row ${side}`;
@@ -1124,24 +1537,51 @@
       }
     });
 
-    // Indicator Toggles
-    el.toggleEma20.addEventListener('click', () => {
-      state.showEma20 = !state.showEma20;
-      el.toggleEma20.classList.toggle('active', state.showEma20);
-      state.ema20Series.applyOptions({ visible: state.showEma20 });
-    });
+    // Indicator Toggles (Metode 1)
+    if (el.toggleEma9) {
+      el.toggleEma9.addEventListener('click', () => {
+        state.showEma9 = !state.showEma9;
+        el.toggleEma9.classList.toggle('active', state.showEma9);
+        if (state.ema9Series) state.ema9Series.applyOptions({ visible: state.showEma9 });
+      });
+    }
 
-    el.toggleEma50.addEventListener('click', () => {
-      state.showEma50 = !state.showEma50;
-      el.toggleEma50.classList.toggle('active', state.showEma50);
-      state.ema50Series.applyOptions({ visible: state.showEma50 });
-    });
+    if (el.toggleEma21) {
+      el.toggleEma21.addEventListener('click', () => {
+        state.showEma21 = !state.showEma21;
+        el.toggleEma21.classList.toggle('active', state.showEma21);
+        if (state.ema21Series) state.ema21Series.applyOptions({ visible: state.showEma21 });
+      });
+    }
 
-    el.toggleVolume.addEventListener('click', () => {
-      state.showVolume = !state.showVolume;
-      el.toggleVolume.classList.toggle('active', state.showVolume);
-      state.volumeSeries.applyOptions({ visible: state.showVolume });
-    });
+    if (el.toggleStoch) {
+      el.toggleStoch.addEventListener('click', () => {
+        state.showStoch = !state.showStoch;
+        el.toggleStoch.classList.toggle('active', state.showStoch);
+        if (el.stochRsiContainer) {
+          el.stochRsiContainer.style.display = state.showStoch ? 'block' : 'none';
+        }
+        resizeCharts();
+      });
+    }
+
+    if (el.toggleSignals) {
+      el.toggleSignals.addEventListener('click', () => {
+        state.showSignals = !state.showSignals;
+        el.toggleSignals.classList.toggle('active', state.showSignals);
+        if (state.candleSeries) {
+          state.candleSeries.setMarkers(state.showSignals ? (state.scalperMarkers || []) : []);
+        }
+      });
+    }
+
+    if (el.toggleVolume) {
+      el.toggleVolume.addEventListener('click', () => {
+        state.showVolume = !state.showVolume;
+        el.toggleVolume.classList.toggle('active', state.showVolume);
+        if (state.volumeSeries) state.volumeSeries.applyOptions({ visible: state.showVolume });
+      });
+    }
 
     el.resetViewBtn.addEventListener('click', () => {
       if (state.chart) {
