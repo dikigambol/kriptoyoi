@@ -31,6 +31,7 @@
     loadDataSeq: 0,
     lastCandle: null,
     candlesCache: [],
+    volumesCache: [],
     lastPrice: 0,
     candleCloseTime: 0,
     timerInterval: null,
@@ -250,8 +251,8 @@
 
     let avgGain = gains / Math.max(1, warmupRsi);
     let avgLoss = losses / Math.max(1, warmupRsi);
-    let rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-    let seedRsi = 100 - (100 / (1 + rs));
+    let rs = avgLoss === 0 ? (avgGain === 0 ? 1 : 100) : avgGain / avgLoss;
+    let seedRsi = (avgLoss === 0 && avgGain === 0) ? 50 : 100 - (100 / (1 + rs));
 
     // Pad initial bars before warmupRsi with seedRsi so length matches candles exactly
     for (let i = 0; i < Math.min(rsiPeriod, n); i++) {
@@ -265,8 +266,9 @@
 
       avgGain = (avgGain * (rsiPeriod - 1) + gain) / rsiPeriod;
       avgLoss = (avgLoss * (rsiPeriod - 1) + loss) / rsiPeriod;
-      rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-      rsiValues.push({ time: candles[i].time, rsi: 100 - (100 / (1 + rs)) });
+      rs = avgLoss === 0 ? (avgGain === 0 ? 1 : 100) : avgGain / avgLoss;
+      const rsiVal = (avgLoss === 0 && avgGain === 0) ? 50 : 100 - (100 / (1 + rs));
+      rsiValues.push({ time: candles[i].time, rsi: rsiVal });
     }
 
     // 2. Raw StochRSI = (RSI - MinRSI) / (MaxRSI - MinRSI) * 100
@@ -776,6 +778,7 @@
         barSpacing: 10,
         minBarSpacing: 4,
         rightOffset: 12,
+        shiftVisibleRangeOnNewBar: true,
         tickMarkFormatter: (time, tickMarkType) => {
           const d = new Date(time * 1000);
           if (tickMarkType === 0) {
@@ -1249,6 +1252,7 @@
       }
 
       state.candlesCache = candles;
+      state.volumesCache = volumes;
       const last = candles[candles.length - 1];
       state.lastCandle = { ...last, volume: volumes[volumes.length - 1]?.value || 0 };
       state.lastPrice = last.close;
@@ -1515,14 +1519,27 @@
     state.lastCandle = { ...candleBar, volume: vol };
     state.candleCloseTime = k.T; // Ms close time
 
-    // Maintain running candles cache
+    // Maintain running candles & volumes cache
     if (state.candlesCache && state.candlesCache.length > 0) {
       const lastIdx = state.candlesCache.length - 1;
       if (state.candlesCache[lastIdx].time === candleTime) {
         state.candlesCache[lastIdx] = candleBar;
+        if (state.volumesCache && state.volumesCache.length > 0) {
+          state.volumesCache[state.volumesCache.length - 1] = volumeBar;
+        }
       } else {
         state.candlesCache.push(candleBar);
-        if (state.candlesCache.length > 500) state.candlesCache.shift();
+        if (state.volumesCache) state.volumesCache.push(volumeBar);
+
+        // Memory buffer guard: keep up to 2000 bars (~33 hours of 1m chart)
+        // If pruning ever occurs, prune synchronously across all series so all chart bar indexes remain 100% matched
+        if (state.candlesCache.length > 2000) {
+          const excess = state.candlesCache.length - 1500;
+          state.candlesCache.splice(0, excess);
+          if (state.volumesCache) state.volumesCache.splice(0, excess);
+          state.candleSeries.setData(state.candlesCache);
+          if (state.volumeSeries && state.volumesCache) state.volumeSeries.setData(state.volumesCache);
+        }
       }
     }
 
@@ -1543,7 +1560,7 @@
     }
 
     // Dynamic Live Recalculation of StochRSI on every price tick
-    if (state.candlesCache && state.candlesCache.length >= 32) {
+    if (state.candlesCache && state.candlesCache.length >= 15) {
       const liveStoch = calculateStochRSI(state.candlesCache, 14, 14, 3, 3);
       if (liveStoch.kData.length > 0) {
         const lastK = liveStoch.kData[liveStoch.kData.length - 1];
@@ -1565,7 +1582,7 @@
     }
 
     // Jika candle close: sinkronisasi penuh indikator & perbarui sinyal marker
-    if (isClosed && state.candlesCache && state.candlesCache.length >= 25) {
+    if (isClosed && state.candlesCache && state.candlesCache.length >= 15) {
       const ema9Data = calculateEMA(state.candlesCache, 9);
       const ema21Data = calculateEMA(state.candlesCache, 21);
       if (state.ema9Series) state.ema9Series.setData(ema9Data);

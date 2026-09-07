@@ -1,29 +1,35 @@
 <!DOCTYPE html>
 <html lang="id">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>KriptoYoi - Realtime Tokocrypto Chart</title>
-  <meta name="description" content="Grafik Candlestick Real-time dari WebSocket Tokocrypto API dengan TradingView Lightweight Charts." />
-  
+  <meta name="description"
+    content="Grafik Candlestick Real-time dari WebSocket Tokocrypto API dengan TradingView Lightweight Charts." />
+
   <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-  
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+    rel="stylesheet">
+
   <!-- CSS -->
   <link rel="stylesheet" href="/static/style.css" />
-  
+
   <!-- Lightweight Charts (Local + Fallback CDN) -->
   <script src="/static/libs/lightweight-charts.standalone.production.js"></script>
 </head>
+
 <body>
   <div id="app" class="dashboard-container">
     <!-- Top Navigation Header -->
     <header class="dashboard-header">
       <div class="brand-section">
         <div class="brand-logo">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+            stroke-linecap="round" stroke-linejoin="round">
             <polyline points="22 7 13.5 15.5 8.5 10.5 2 17"></polyline>
             <polyline points="16 7 22 7 22 13"></polyline>
           </svg>
@@ -42,7 +48,9 @@
           <span class="coin-trigger-icon">🪙</span>
           <span class="coin-trigger-text" id="selectorCurrentCoin">BTC / USDT</span>
           <span class="coin-trigger-count" id="totalCoinsBadge">1,362 Koin</span>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
         </button>
 
         <!-- Connection Status Indicator -->
@@ -72,7 +80,8 @@
             <circle cx="11" cy="11" r="8"></circle>
             <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
           </svg>
-          <input type="text" id="pairSearchInput" placeholder="Cari koin atau token: PEPE, DOGE, SOL, ETH, BIDR..." autocomplete="off" />
+          <input type="text" id="pairSearchInput" placeholder="Cari koin atau token: PEPE, DOGE, SOL, ETH, BIDR..."
+            autocomplete="off" />
           <span class="clear-search-btn hidden" id="clearSearchBtn">✕</span>
         </div>
 
@@ -188,7 +197,6 @@
     <!-- Scalper Analysis Ribbon (Metode 1: Trend & Momentum Scalper) -->
     <section class="scalper-radar-ribbon" id="scalperRadar">
       <div class="radar-status-block">
-        <span class="radar-badge-title">METODE 1 SCALPER:</span>
         <div class="radar-signal-badge neutral" id="radarSignalBadge">
           <span class="pulse-indicator"></span>
           <span class="signal-text" id="radarSignalText">MENGANALISIS PASAR...</span>
@@ -341,7 +349,9 @@
           <span class="pulse-live"></span>
           Data Feed: Tokocrypto Exchange API v3
         </span>
-        <span class="timezone-badge" style="background: rgba(6, 182, 212, 0.1); color: var(--accent-cyan); padding: 2px 7px; border-radius: 4px; font-weight: 600; font-size: 0.7rem;">WIB (UTC+7)</span>
+        <span class="timezone-badge"
+          style="background: rgba(6, 182, 212, 0.1); color: var(--accent-cyan); padding: 2px 7px; border-radius: 4px; font-weight: 600; font-size: 0.7rem;">WIB
+          (UTC+7)</span>
         <span class="version-tag">KriptoYoi v1.0</span>
       </div>
     </footer>
@@ -350,4 +360,5 @@
   <!-- Main JavaScript Logic -->
   <script src="/static/app.js"></script>
 </body>
+
 </html>
