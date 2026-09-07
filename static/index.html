@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KriptoYoi - Realtime Tokocrypto Chart</title>
+  <meta name="description" content="Grafik Candlestick Real-time dari WebSocket Tokocrypto API dengan TradingView Lightweight Charts." />
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- CSS -->
+  <link rel="stylesheet" href="/static/style.css" />
+  
+  <!-- Lightweight Charts (Local + Fallback CDN) -->
+  <script src="/static/libs/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+  <div id="app" class="dashboard-container">
+    <!-- Top Navigation Header -->
+    <header class="dashboard-header">
+      <div class="brand-section">
+        <div class="brand-logo">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="22 7 13.5 15.5 8.5 10.5 2 17"></polyline>
+            <polyline points="16 7 22 7 22 13"></polyline>
+          </svg>
+          <span class="brand-name">KRIPTO<span class="accent-text">YOI</span></span>
+        </div>
+        <div class="api-badge" id="apiBadge">
+          <span class="pulse-dot"></span>
+          <span class="api-label">Tokocrypto WSS Live</span>
+        </div>
+      </div>
+
+      <!-- Quick Pair Selector Pills -->
+      <div class="quick-pairs" id="quickPairs">
+        <button class="pair-pill active" data-symbol="BTCUSDT">BTC/USDT</button>
+        <button class="pair-pill" data-symbol="ETHUSDT">ETH/USDT</button>
+        <button class="pair-pill" data-symbol="SOLUSDT">SOL/USDT</button>
+        <button class="pair-pill" data-symbol="BNBUSDT">BNB/USDT</button>
+        <button class="pair-pill" data-symbol="XRPUSDT">XRP/USDT</button>
+        <button class="pair-pill" data-symbol="BTCBIDR">BTC/BIDR</button>
+        <button class="pair-pill" data-symbol="USDTBIDR">USDT/BIDR</button>
+      </div>
+
+      <!-- Search & Status Actions -->
+      <div class="header-actions">
+        <div class="search-box-wrapper">
+          <button id="searchPairBtn" class="search-trigger-btn" title="Cari Pair Kripto">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <span id="searchBtnLabel">Cari Koin...</span>
+            <kbd class="hotkey-badge">/</kbd>
+          </button>
+          
+          <!-- Dropdown Search Modal/Menu -->
+          <div id="pairSearchDropdown" class="pair-dropdown hidden">
+            <div class="dropdown-header">
+              <input type="text" id="pairSearchInput" placeholder="Cari misal: ETH, SOL, BIDR..." autocomplete="off" />
+            </div>
+            <div class="pair-list-scroller" id="pairSearchResults">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Connection Status Indicator -->
+        <div class="connection-status connected" id="wsStatusPill" title="Status WebSocket">
+          <span class="status-indicator"></span>
+          <span class="status-text" id="wsStatusText">Terhubung</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Market Ribbon / Statistics Toolbar -->
+    <section class="ticker-ribbon">
+      <div class="ticker-main">
+        <div class="active-symbol-info">
+          <h1 class="symbol-display" id="displaySymbol">BTC/USDT</h1>
+          <span class="market-type-badge" id="displayBaseQuote">USDT Market</span>
+        </div>
+
+        <div class="price-block">
+          <div class="current-price" id="displayPrice">--</div>
+          <div class="price-change-badge" id="displayChange">0.00%</div>
+        </div>
+      </div>
+
+      <div class="ticker-stats-grid">
+        <div class="stat-card">
+          <span class="stat-label">24h High</span>
+          <span class="stat-value" id="statHigh">--</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">24h Low</span>
+          <span class="stat-value" id="statLow">--</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">24h Volume</span>
+          <span class="stat-value" id="statVolume">--</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Candle Close</span>
+          <span class="stat-value timer-text" id="candleTimer">--:--</span>
+        </div>
+      </div>
+
+      <!-- Controls: Timeframe Intervals & Indicators -->
+      <div class="chart-controls">
+        <div class="interval-selector" id="intervalSelector">
+          <button class="interval-btn active" data-interval="1m">1m</button>
+          <button class="interval-btn" data-interval="3m">3m</button>
+          <button class="interval-btn" data-interval="5m">5m</button>
+          <button class="interval-btn" data-interval="15m">15m</button>
+          <button class="interval-btn" data-interval="30m">30m</button>
+          <button class="interval-btn" data-interval="1h">1h</button>
+          <button class="interval-btn" data-interval="4h">4h</button>
+          <button class="interval-btn" data-interval="1d">1d</button>
+        </div>
+
+        <div class="indicator-toggles">
+          <button id="toggleEma20" class="tool-btn active" title="Toggle EMA 20 (Cyan)">
+            <span class="btn-color-dot ema20-dot"></span> EMA 20
+          </button>
+          <button id="toggleEma50" class="tool-btn active" title="Toggle EMA 50 (Purple)">
+            <span class="btn-color-dot ema50-dot"></span> EMA 50
+          </button>
+          <button id="toggleVolume" class="tool-btn active" title="Toggle Volume Sub-chart">
+            <span class="btn-color-dot vol-dot"></span> Vol
+          </button>
+          <button id="resetViewBtn" class="tool-btn icon-only" title="Reset Tampilan / Auto Scale">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M15 3h6v6"></path>
+              <path d="M9 21H3v-6"></path>
+              <path d="M21 3l-7 7"></path>
+              <path d="M3 21l7-7"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Main Workspace: Chart & Side Panel -->
+    <main class="main-workspace">
+      <!-- Chart Viewport -->
+      <section class="chart-section" id="chartSection">
+        <!-- Floating Crosshair Info Overlay -->
+        <div class="chart-legend" id="chartLegend">
+          <div class="legend-row">
+            <span class="legend-pair" id="legendPair">BTCUSDT</span>
+            <span class="legend-interval" id="legendInterval">1m</span>
+            <span class="legend-time" id="legendTime">--</span>
+          </div>
+          <div class="legend-ohlc">
+            <span>O: <b id="legendOpen">--</b></span>
+            <span>H: <b id="legendHigh">--</b></span>
+            <span>L: <b id="legendLow">--</b></span>
+            <span>C: <b id="legendClose">--</b></span>
+            <span>Change: <b id="legendDiff">--</b></span>
+            <span>Vol: <b id="legendVol">--</b></span>
+          </div>
+          <div class="legend-indicators">
+            <span class="ema20-val">EMA 20: <b id="legendEma20">--</b></span>
+            <span class="ema50-val">EMA 50: <b id="legendEma50">--</b></span>
+          </div>
+        </div>
+
+        <!-- Canvas Container for TradingView Lightweight Charts -->
+        <div id="chartContainer" class="chart-canvas-wrapper"></div>
+
+        <!-- Loading Overlay -->
+        <div id="chartLoading" class="chart-loading-overlay">
+          <div class="spinner"></div>
+          <p>Memuat grafik candlestick Tokocrypto...</p>
+        </div>
+      </section>
+
+      <!-- Right Side Panel: Live Trades & Watchlist -->
+      <aside class="sidebar-section">
+        <div class="sidebar-tabs">
+          <button class="tab-btn active" data-tab="tradesTab">Transaksi Realtime</button>
+          <button class="tab-btn" data-tab="watchlistTab">Top Pasar</button>
+        </div>
+
+        <!-- Live Trades Tab Content -->
+        <div class="tab-content active" id="tradesTab">
+          <div class="trade-table-header">
+            <span>Harga</span>
+            <span class="align-right">Jumlah</span>
+            <span class="align-right">Waktu</span>
+          </div>
+          <div class="trade-stream-list" id="tradesList">
+            <!-- Populated via WebSocket stream btcusdt@trade -->
+          </div>
+        </div>
+
+        <!-- Watchlist Tab Content -->
+        <div class="tab-content" id="watchlistTab">
+          <div class="watchlist-search">
+            <input type="text" id="watchlistFilterInput" placeholder="Filter koin..." />
+          </div>
+          <div class="watchlist-stream-list" id="watchlistItems">
+            <!-- Populated via API -->
+          </div>
+        </div>
+      </aside>
+    </main>
+
+    <!-- Bottom Status Bar -->
+    <footer class="dashboard-footer">
+      <div class="footer-left">
+        <span class="endpoint-tag">WebSocket Stream:</span>
+        <code class="stream-endpoint-code" id="activeStreamEndpoint">wss://stream-cloud.tokocrypto.site/stream</code>
+      </div>
+      <div class="footer-right">
+        <span class="feed-indicator">
+          <span class="pulse-live"></span>
+          Data Feed: Tokocrypto Exchange API v3
+        </span>
+        <span class="version-tag">KriptoYoi v1.0</span>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Main JavaScript Logic -->
+  <script src="/static/app.js"></script>
+</body>
+</html>
