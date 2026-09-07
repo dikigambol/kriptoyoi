@@ -43,6 +43,8 @@
     scalperMarkers: [],
     currentEma9: null,
     currentEma21: null,
+    baseEma9: null,   // Committed EMA9 value from last closed candle
+    baseEma21: null,  // Committed EMA21 value from last closed candle
     currentStochK: null,
     currentStochD: null,
     showZones: true,
@@ -294,6 +296,7 @@
   }
 
   // --- Scalper Signal Generator (Metode 1: Trend & Momentum) ---
+  // Confluence-based: EMA Trend + Stoch RSI Momentum + Candle Body Confirmation
   function generateScalperSignals(candles, ema9Data, ema21Data, stochKData, stochDData) {
     const markers = [];
     if (!candles || candles.length < 5) return markers;
@@ -303,27 +306,49 @@
     const stochKMap = new Map(stochKData.map(d => [d.time, d.value]));
     const stochDMap = new Map(stochDData.map(d => [d.time, d.value]));
 
-    for (let i = 2; i < candles.length; i++) {
+    let lastBuyIdx = -10;   // Index of last BUY signal (for cooldown)
+    let lastSellIdx = -10;  // Index of last SELL signal (for cooldown)
+    const COOLDOWN = 3;     // Min candles between same-type signals
+
+    for (let i = 3; i < candles.length; i++) {
       const c = candles[i];
       const prevC = candles[i - 1];
+      const prevC2 = candles[i - 2];
       const e9 = ema9Map.get(c.time);
       const e21 = ema21Map.get(c.time);
+      const prevE9 = ema9Map.get(prevC.time);
+      const prevE21 = ema21Map.get(prevC.time);
       const k = stochKMap.get(c.time);
       const d = stochDMap.get(c.time);
       const prevK = stochKMap.get(prevC.time);
       const prevD = stochDMap.get(prevC.time);
+      const prevK2 = stochKMap.get(prevC2.time);
+      const prevD2 = stochDMap.get(prevC2.time);
 
-      if (!e9 || !e21 || k === undefined || d === undefined || prevK === undefined || prevD === undefined) {
+      if (!e9 || !e21 || !prevE9 || !prevE21 ||
+        k === undefined || d === undefined ||
+        prevK === undefined || prevD === undefined ||
+        prevK2 === undefined || prevD2 === undefined) {
         continue;
       }
 
-      // BUY SIGNAL CONDITION:
-      // 1. Tren Mikro Bullish: EMA 9 >= EMA 21 & Candle Close >= EMA 9
-      // 2. Momentum Trigger: StochRSI K cross up D dari area oversold/rebound (< 40)
+      // === BUY SIGNAL (Scalp Entry) ===
+      // Condition 1: Micro-trend Bullish — EMA 9 >= EMA 21 AND close >= EMA 9
       const isBullTrend = e9 >= e21 && c.close >= e9;
-      const isStochCrossUp = prevK <= prevD && k > d && (prevK <= 35 || k <= 42);
 
-      if (isBullTrend && isStochCrossUp) {
+      // Condition 2: StochRSI momentum cross-up from oversold zone
+      //   - K crossed above D (prevK <= prevD && k > d)
+      //   - Cross originates from oversold area: prevK <= 30 (deep oversold)
+      //     OR both prevK < 45 AND k < 55 (rebound zone, softer)
+      const isStochCrossUp = prevK <= prevD && k > d;
+      const isFromOversold = prevK <= 30 || (prevK < 45 && k < 55);
+
+      // Condition 3: Bullish candle body confirmation (close > open, not a doji)
+      const bodySize = Math.abs(c.close - c.open);
+      const candleRange = c.high - c.low;
+      const isBullishCandle = c.close > c.open && bodySize > candleRange * 0.2;
+
+      if (isBullTrend && isStochCrossUp && isFromOversold && isBullishCandle && (i - lastBuyIdx) >= COOLDOWN) {
         markers.push({
           time: c.time,
           position: 'belowBar',
@@ -332,24 +357,47 @@
           text: 'BUY',
           size: 1.2,
         });
+        lastBuyIdx = i;
         continue;
       }
 
-      // EXIT / SELL CONDITION:
-      // 1. StochRSI overbought (> 78) dan cross down D
-      // 2. ATAU Candle tembus ke bawah EMA 9 setelah sebelumnya di atas
-      const isStochCrossDown = prevK >= prevD && k < d && prevK >= 78;
-      const isTrendBreak = c.close < e9 && prevC.close >= e9;
+      // === SELL / EXIT / TP SIGNAL ===
 
-      if (isStochCrossDown || isTrendBreak) {
+      // Type A: Take-Profit Exit — StochRSI overbought cross-down
+      //   - K was >= 75 (overbought territory) and crosses below D
+      //   - Confirmed: prevK >= prevD && k < d (actual crossover)
+      //   - Stronger if bearish candle (close < open)
+      const isStochOverboughtCross = prevK >= prevD && k < d && prevK >= 75;
+      const isBearishCandle = c.close < c.open;
+
+      // Type B: Cut Loss / Trend-Break Exit
+      //   - Close breaks below EMA 9 (was above) AND EMA 9 < EMA 21 (bearish shift)
+      //   - OR Close breaks below EMA 21 (strong bearish momentum)
+      const isTrendBreakSoft = c.close < e9 && prevC.close >= e9 && e9 < e21;
+      const isTrendBreakHard = c.close < e21 && prevC.close >= e21;
+
+      if (isStochOverboughtCross && (i - lastSellIdx) >= COOLDOWN) {
+        // TP/EXIT: Momentum exhaustion from overbought
+        markers.push({
+          time: c.time,
+          position: 'aboveBar',
+          color: '#f59e0b',
+          shape: 'arrowDown',
+          text: 'TP/EXIT',
+          size: 1.1,
+        });
+        lastSellIdx = i;
+      } else if ((isTrendBreakSoft || isTrendBreakHard) && isBearishCandle && (i - lastSellIdx) >= COOLDOWN) {
+        // CUT: Trend structure breaking down
         markers.push({
           time: c.time,
           position: 'aboveBar',
           color: '#f43f5e',
           shape: 'arrowDown',
-          text: isStochCrossDown ? 'TP/EXIT' : 'CUT',
+          text: isTrendBreakHard ? 'CUT!' : 'CUT',
           size: 1.1,
         });
+        lastSellIdx = i;
       }
     }
     return markers;
@@ -362,47 +410,86 @@
 
     // 1. Evaluasi Tren (EMA 9 vs EMA 21)
     let isBull = false;
+    let isBear = false;
     if (e9 && e21) {
       isBull = e9 >= e21 && price >= e9;
+      isBear = e9 < e21 && price < e9;
       if (el.cfTrend) {
-        el.cfTrend.textContent = isBull ? 'Bullish (EMA 9 > 21)' : 'Bearish / Melemah';
-        el.cfTrend.className = `cf-value ${isBull ? 'bull' : 'bear'}`;
+        if (isBull) {
+          el.cfTrend.textContent = '▲ Bullish (EMA 9 > 21, Close > EMA 9)';
+          el.cfTrend.className = 'cf-value bull';
+        } else if (isBear) {
+          el.cfTrend.textContent = '▼ Bearish (EMA 9 < 21, Close < EMA 9)';
+          el.cfTrend.className = 'cf-value bear';
+        } else {
+          el.cfTrend.textContent = '— Transisi / Konsolidasi';
+          el.cfTrend.className = 'cf-value';
+        }
       }
     }
 
     // 2. Evaluasi Stoch RSI
     let isStochOversold = false;
     let isStochOverbought = false;
+    let kAboveD = false;
     if (k !== undefined && d !== undefined) {
       isStochOversold = k <= 30;
-      isStochOverbought = k >= 78;
+      isStochOverbought = k >= 75;
+      kAboveD = k > d;
       if (el.cfStoch) {
         let stochStatus = 'Netral';
-        if (isStochOversold) stochStatus = 'Oversold (Jenuh Jual)';
-        else if (isStochOverbought) stochStatus = 'Overbought (Jenuh Beli)';
-        el.cfStoch.textContent = `K: ${k.toFixed(1)} | D: ${d.toFixed(1)} (${stochStatus})`;
-        el.cfStoch.className = `cf-value ${isStochOversold ? 'bull' : (isStochOverbought ? 'bear' : '')}`;
+        let stochClass = '';
+        if (isStochOversold) {
+          stochStatus = 'Oversold (Jenuh Jual)';
+          stochClass = 'bull';
+        } else if (isStochOverbought) {
+          stochStatus = 'Overbought (Jenuh Beli)';
+          stochClass = 'bear';
+        } else if (kAboveD && k < 55) {
+          stochStatus = 'Momentum Naik ↑';
+          stochClass = 'bull';
+        } else if (!kAboveD && k > 45) {
+          stochStatus = 'Momentum Turun ↓';
+          stochClass = 'bear';
+        }
+        el.cfStoch.textContent = `K: ${k.toFixed(1)} | D: ${d.toFixed(1)} — ${stochStatus}`;
+        el.cfStoch.className = `cf-value ${stochClass}`;
       }
     }
 
     // 3. Evaluasi Status Sinyal Radar
     if (el.radarSignalBadge && el.radarSignalText) {
-      if (isBull && (isStochOversold || (k && d && k > d && k < 45))) {
+      // BUY SETUP: Bullish trend + Stoch oversold or rebounding from low zone
+      if (isBull && (isStochOversold || (k !== undefined && d !== undefined && kAboveD && k < 50))) {
         el.radarSignalBadge.className = 'radar-signal-badge buy';
-        el.radarSignalText.textContent = '🟢 BUY SETUP AKTIF (Scalp Entry)';
-      } else if (isStochOverbought || (e9 && price < e9)) {
+        el.radarSignalText.textContent = 'BUY SETUP AKTIF (Scalp Entry)';
+      }
+      // TP ZONE: Overbought area, consider taking profit
+      else if (isStochOverbought && !kAboveD) {
         el.radarSignalBadge.className = 'radar-signal-badge sell';
-        el.radarSignalText.textContent = isStochOverbought ? '🔴 Jenuh Beli (Pertimbangkan TP)' : '🔴 Tren Melemah / Exit';
-      } else {
+        el.radarSignalText.textContent = 'AREA TP (Stoch Overbought Cross ↓)';
+      }
+      // DANGER ZONE: Bearish trend + momentum down
+      else if (isBear || (e9 && price < e9 && e9 < e21)) {
+        el.radarSignalBadge.className = 'radar-signal-badge sell';
+        el.radarSignalText.textContent = 'ZONA BAHAYA (Tren Bearish / Exit)';
+      }
+      // CAUTION: Overbought but still holding
+      else if (isStochOverbought && kAboveD) {
+        el.radarSignalBadge.className = 'radar-signal-badge sell';
+        el.radarSignalText.textContent = 'Jenuh Beli ⚠️ (Siap-siap TP)';
+      }
+      // Neutral / Wait
+      else {
         el.radarSignalBadge.className = 'radar-signal-badge neutral';
-        el.radarSignalText.textContent = '⚪ TUNGGU KONFIRMASI (Wait / Neutral)';
+        el.radarSignalText.textContent = 'TUNGGU KONFIRMASI (Wait / Neutral)';
       }
     }
 
-    // 4. Kalkulasi Estimasi Target TP (+0.5%) & SL (-0.3%)
+    // 4. Kalkulasi Estimasi Target TP (+0.5%) & SL (di bawah EMA 21 atau -0.3%)
     if (price > 0) {
       const tpPrice = price * 1.005; // +0.5%
-      const slPrice = e21 && e21 < price ? e21 * 0.998 : price * 0.997; // -0.3% atau di bawah EMA 21
+      const slPrice = e21 && e21 < price ? e21 * 0.998 : price * 0.997; // -0.2% di bawah EMA 21 atau -0.3%
       if (el.radarTpVal) el.radarTpVal.textContent = formatPrice(tpPrice, state.symbol);
       if (el.radarSlVal) el.radarSlVal.textContent = formatPrice(slPrice, state.symbol);
     }
@@ -581,19 +668,19 @@
   function clearZonePriceLines() {
     if (state.candleSeries) {
       if (state.buyZoneUpperLine) {
-        try { state.candleSeries.removePriceLine(state.buyZoneUpperLine); } catch(e) {}
+        try { state.candleSeries.removePriceLine(state.buyZoneUpperLine); } catch (e) { }
         state.buyZoneUpperLine = null;
       }
       if (state.buyZoneLowerLine) {
-        try { state.candleSeries.removePriceLine(state.buyZoneLowerLine); } catch(e) {}
+        try { state.candleSeries.removePriceLine(state.buyZoneLowerLine); } catch (e) { }
         state.buyZoneLowerLine = null;
       }
       if (state.sellZoneUpperLine) {
-        try { state.candleSeries.removePriceLine(state.sellZoneUpperLine); } catch(e) {}
+        try { state.candleSeries.removePriceLine(state.sellZoneUpperLine); } catch (e) { }
         state.sellZoneUpperLine = null;
       }
       if (state.sellZoneLowerLine) {
-        try { state.candleSeries.removePriceLine(state.sellZoneLowerLine); } catch(e) {}
+        try { state.candleSeries.removePriceLine(state.sellZoneLowerLine); } catch (e) { }
         state.sellZoneLowerLine = null;
       }
     }
@@ -1069,7 +1156,9 @@
       const lastD = stochData.dData.length > 0 ? stochData.dData[stochData.dData.length - 1].value : null;
 
       state.currentEma9 = lastE9;
+      state.baseEma9 = lastE9;
       state.currentEma21 = lastE21;
+      state.baseEma21 = lastE21;
       state.currentStochK = lastK;
       state.currentStochD = lastD;
 
@@ -1123,7 +1212,7 @@
         state.ws.onerror = null;
         state.ws.onclose = null; // Detach listener so manual close doesn't trigger reconnect loop
         state.ws.close();
-      } catch (e) {}
+      } catch (e) { }
       state.ws = null;
     }
 
@@ -1263,16 +1352,17 @@
     }
 
     // Dynamic Live Recalculation of EMA 9 & EMA 21
-    if (state.currentEma9 !== null) {
+    // Use base values (committed from last closed candle) to avoid tick-by-tick drift
+    if (state.baseEma9 !== null) {
       const k9 = 2 / (9 + 1);
-      const liveEma9 = (c - state.currentEma9) * k9 + state.currentEma9;
+      const liveEma9 = (c - state.baseEma9) * k9 + state.baseEma9;
       if (state.ema9Series) state.ema9Series.update({ time: candleTime, value: liveEma9 });
       state.currentEma9 = liveEma9;
     }
 
-    if (state.currentEma21 !== null) {
+    if (state.baseEma21 !== null) {
       const k21 = 2 / (21 + 1);
-      const liveEma21 = (c - state.currentEma21) * k21 + state.currentEma21;
+      const liveEma21 = (c - state.baseEma21) * k21 + state.baseEma21;
       if (state.ema21Series) state.ema21Series.update({ time: candleTime, value: liveEma21 });
       state.currentEma21 = liveEma21;
     }
@@ -1315,8 +1405,14 @@
         state.candleSeries.setMarkers(state.showSignals ? state.scalperMarkers : []);
       }
 
-      if (ema9Data.length > 0) state.currentEma9 = ema9Data[ema9Data.length - 1].value;
-      if (ema21Data.length > 0) state.currentEma21 = ema21Data[ema21Data.length - 1].value;
+      if (ema9Data.length > 0) {
+        state.currentEma9 = ema9Data[ema9Data.length - 1].value;
+        state.baseEma9 = state.currentEma9;  // Commit base for next tick calculations
+      }
+      if (ema21Data.length > 0) {
+        state.currentEma21 = ema21Data[ema21Data.length - 1].value;
+        state.baseEma21 = state.currentEma21;  // Commit base for next tick calculations
+      }
       if (stochData.kData.length > 0) state.currentStochK = stochData.kData[stochData.kData.length - 1].value;
       if (stochData.dData.length > 0) state.currentStochD = stochData.dData[stochData.dData.length - 1].value;
 
