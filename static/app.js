@@ -120,15 +120,33 @@
     return Number(num).toFixed(2);
   }
 
-  function formatTime(timestampSec) {
+  function formatTime(timestampSec, includeSeconds = true) {
     const d = new Date(timestampSec * 1000);
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const timeStr = d.toLocaleTimeString('id-ID', {
+      timeZone: 'Asia/Jakarta',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: includeSeconds ? '2-digit' : undefined,
+      hour12: false,
+    });
+    return `${timeStr} WIB`;
   }
 
   function formatDate(timestampSec) {
     const d = new Date(timestampSec * 1000);
-    return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' +
-           d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const dateStr = d.toLocaleDateString('id-ID', {
+      timeZone: 'Asia/Jakarta',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    });
+    const timeStr = d.toLocaleTimeString('id-ID', {
+      timeZone: 'Asia/Jakarta',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    return `${dateStr}, ${timeStr} WIB`;
   }
 
   // --- Technical Indicator Calculations (EMA) ---
@@ -171,6 +189,20 @@
     }
 
     const chartOptions = {
+      localization: {
+        locale: 'id-ID',
+        dateFormat: 'dd MMM yyyy',
+        timeFormatter: (timestamp) => {
+          const d = new Date(timestamp * 1000);
+          return d.toLocaleTimeString('id-ID', {
+            timeZone: 'Asia/Jakarta',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+          }) + ' WIB';
+        },
+      },
       layout: {
         background: { type: 'solid', color: '#0a0d14' },
         textColor: '#94a3b8',
@@ -211,6 +243,21 @@
         secondsVisible: false,
         barSpacing: 10,
         minBarSpacing: 4,
+        tickMarkFormatter: (time, tickMarkType) => {
+          const d = new Date(time * 1000);
+          if (tickMarkType === 0) {
+            return d.toLocaleDateString('id-ID', { timeZone: 'Asia/Jakarta', year: 'numeric' });
+          } else if (tickMarkType === 1) {
+            return d.toLocaleDateString('id-ID', { timeZone: 'Asia/Jakarta', month: 'short' });
+          } else if (tickMarkType === 2) {
+            return d.toLocaleDateString('id-ID', { timeZone: 'Asia/Jakarta', day: 'numeric', month: 'short' });
+          } else if (tickMarkType === 3) {
+            return d.toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', hour12: false });
+          } else if (tickMarkType === 4) {
+            return d.toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+          }
+          return d.toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', hour12: false });
+        },
       },
       handleScale: {
         mouseWheel: true,
