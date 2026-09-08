@@ -170,6 +170,12 @@
           <button id="toggleEma21" class="tool-btn active" title="Toggle EMA 21 (Garis Tren - Cyan)">
             <span class="btn-color-dot ema21-dot"></span> EMA 21
           </button>
+          <button id="toggleEma50" class="tool-btn active" title="Toggle EMA 50 (Garis Makro - Amber)">
+            <span class="btn-color-dot ema50-dot"></span> EMA 50
+          </button>
+          <button id="toggleSrLevels" class="tool-btn active" title="Toggle Level Support & Resistance (P0)">
+            <span class="btn-color-dot sr-dot"></span> S/R Levels
+          </button>
           <button id="toggleStoch" class="tool-btn active" title="Toggle Sub-chart Stochastic RSI (14, 14, 3, 3)">
             <span class="btn-color-dot stoch-dot"></span> Stoch RSI
           </button>
@@ -194,7 +200,7 @@
       </div>
     </section>
 
-    <!-- Scalper Analysis Ribbon (Metode 1: Trend & Momentum Scalper) -->
+    <!-- Scalper Analysis Ribbon (P0 Market Structure, MTF, S/R, ATR, RVOL) -->
     <section class="scalper-radar-ribbon" id="scalperRadar">
       <div class="radar-status-block">
         <div class="radar-signal-badge neutral" id="radarSignalBadge">
@@ -204,21 +210,39 @@
       </div>
 
       <div class="radar-confluence-group">
-        <!-- Trend (EMA 9/21) -->
-        <div class="confluence-item">
-          <span class="cf-label">Tren (EMA 9/21)</span>
-          <span class="cf-value" id="cfTrend">--</span>
+        <!-- MTF Confluence Matrix (P0) -->
+        <div class="confluence-item mtf-matrix-item" title="P0: Multi-Timeframe Alignment (1H, 15M, 5M, 1M)">
+          <span class="cf-label">MTF Confluence</span>
+          <div class="mtf-badges-row">
+            <span class="mtf-pill" id="mtf1h" title="1H Macro">1H: --</span>
+            <span class="mtf-pill" id="mtf15m" title="15M Structure">15M: --</span>
+            <span class="mtf-pill" id="mtf5m" title="5M Scalp">5M: --</span>
+            <span class="mtf-pill" id="mtf1m" title="1M Entry">1M: --</span>
+          </div>
+          <span class="mtf-summary-text" id="mtfSummaryText">--/4</span>
         </div>
 
-        <!-- Stoch RSI -->
-        <div class="confluence-item">
-          <span class="cf-label">Stoch RSI (14)</span>
-          <span class="cf-value" id="cfStoch">--</span>
+        <!-- Market Structure & BOS/CHoCH (P0) -->
+        <div class="confluence-item structure-item" title="P0: Market Structure & BOS/CHoCH">
+          <span class="cf-label">Struktur & BOS</span>
+          <div class="structure-val-group">
+            <span class="structure-trend-badge" id="structureTrendBadge">--</span>
+            <span class="bos-choch-badge" id="bosChochBadge">--</span>
+          </div>
+        </div>
+
+        <!-- Volatility ATR & RVOL (P0) -->
+        <div class="confluence-item vol-atr-item" title="P0: Relative Volume & ATR Volatility">
+          <span class="cf-label">RVOL & ATR</span>
+          <div class="vol-atr-row">
+            <span class="rvol-badge" id="rvolBadge">RVOL: --</span>
+            <span class="atr-badge" id="atrBadge">ATR: --</span>
+          </div>
         </div>
 
         <!-- Live Order Flow Pressure Meter -->
         <div class="confluence-item tape-pressure-item">
-          <span class="cf-label">Tekanan Beli (Tape)</span>
+          <span class="cf-label">Order Tape</span>
           <div class="pressure-bar-wrapper">
             <div class="pressure-fill-buy" id="pressureFillBuy" style="width: 50%;"></div>
           </div>
@@ -226,18 +250,18 @@
         </div>
       </div>
 
-      <!-- Prediksi Area Buy (Demand) & Area Sell (Supply) -->
+      <!-- Prediksi S/R Levels (P0) & Area Beli/Jual -->
       <div class="radar-zones-group">
-        <div class="zone-badge zone-buy-badge" id="radarBuyZoneBadge" title="Area Pantulan Beli Terdekat (Demand)">
-          <span class="zone-label">🟢 AREA BELI:</span>
+        <div class="zone-badge zone-buy-badge" id="radarBuyZoneBadge" title="Support Terdekat / Demand Area">
+          <span class="zone-label">🟢 SUP/DEMAND:</span>
           <span class="zone-val" id="radarBuyZoneVal">--</span>
         </div>
-        <div class="zone-badge zone-sell-badge" id="radarSellZoneBadge" title="Area Target Jual Terdekat (Supply)">
-          <span class="zone-label">🔴 AREA JUAL:</span>
+        <div class="zone-badge zone-sell-badge" id="radarSellZoneBadge" title="Resistance Terdekat / Supply Area">
+          <span class="zone-label">🔴 RES/SUPPLY:</span>
           <span class="zone-val" id="radarSellZoneVal">--</span>
         </div>
         <div class="zone-status-pill neutral" id="radarZoneStatusPill">
-          <span id="radarZoneStatusText">Di Tengah Zona</span>
+          <span id="radarZoneStatusText">Di Antara S/R</span>
         </div>
       </div>
 
@@ -276,6 +300,7 @@
           <div class="legend-indicators">
             <span class="ema9-val">EMA 9: <b id="legendEma9">--</b></span>
             <span class="ema21-val">EMA 21: <b id="legendEma21">--</b></span>
+            <span class="ema50-val">EMA 50: <b id="legendEma50">--</b></span>
             <span class="stoch-val">Stoch %K: <b id="legendStochK">--</b> %D: <b id="legendStochD">--</b></span>
           </div>
         </div>

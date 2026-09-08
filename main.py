@@ -207,6 +207,85 @@ async def get_klines(
         raise HTTPException(status_code=502, detail=f"Network error connecting to Tokocrypto: {str(e)}")
 
 
+from analyzer.p0_engine import run_full_p0_analysis
+
+# Cache for P0 analysis (TTL 8 seconds per symbol+interval)
+p0_cache: dict[str, dict] = {}
+
+async def fetch_timeframe_klines(client: httpx.AsyncClient, symbol: str, interval: str, limit: int = 120):
+    """Fetch and format candles for a specific timeframe."""
+    params = {"symbol": symbol, "interval": interval, "limit": limit}
+    try:
+        resp = await client.get(f"{BASE_REST_URL}/api/v3/klines", params=params, headers=get_headers())
+        if resp.status_code == 200:
+            raw = resp.json()
+            candles = []
+            for item in raw:
+                candles.append({
+                    "time": int(item[0]) // 1000,
+                    "open": float(item[1]),
+                    "high": float(item[2]),
+                    "low": float(item[3]),
+                    "close": float(item[4]),
+                    "volume": float(item[5])
+                })
+            return interval, candles
+    except Exception:
+        pass
+    return interval, []
+
+
+@app.get("/api/analysis/p0")
+async def get_p0_analysis(
+    symbol: str = Query("BTCUSDT", description="Trading pair symbol"),
+    interval: str = Query("1m", description="Active chart timeframe")
+):
+    """
+    Get Stage P0 Quantitative Scalping Analysis:
+    - Market Structure (Fractal Swing H/L, BOS, CHoCH, Trend Direction)
+    - Dynamic Support & Resistance Levels
+    - Volatility Engine (ATR 14 + Classification)
+    - Relative Volume (RVOL 20-SMA + Spike detection)
+    - Momentum Engine (EMA 9, 21, 50 Alignment & Slopes)
+    - Multi-Timeframe (MTF) Confluence Matrix (1H, 15M, 5M, 1M)
+    """
+    clean_symbol = symbol.upper().replace("_", "")
+    cache_key = f"{clean_symbol}_{interval}"
+    now = time.time()
+
+    # Check cache (8-second TTL)
+    if cache_key in p0_cache:
+        cached = p0_cache[cache_key]
+        if now - cached["cached_at"] < 8:
+            return cached["data"]
+
+    timeframes = ["1h", "15m", "5m", "1m"]
+    # If active interval is something else (like 3m, 30m, 4h), include it too
+    all_tfs = list(set(timeframes + [interval]))
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            tasks = [fetch_timeframe_klines(client, clean_symbol, tf, limit=120) for tf in all_tfs]
+            results = await asyncio.gather(*tasks)
+
+            tf_candles = {tf: candles for tf, candles in results if candles}
+
+            if not tf_candles or (interval not in tf_candles and "1m" not in tf_candles):
+                raise HTTPException(status_code=502, detail="Failed to fetch candlestick data for analysis")
+
+            analysis = run_full_p0_analysis(clean_symbol, tf_candles, active_interval=interval)
+
+            p0_cache[cache_key] = {
+                "cached_at": now,
+                "data": analysis
+            }
+            return analysis
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Analysis calculation error: {str(e)}")
+
+
 @app.get("/api/ticker24h")
 async def get_ticker_24h(symbol: str = Query("BTCUSDT")):
     """Get 24h ticker summary for a specific symbol."""

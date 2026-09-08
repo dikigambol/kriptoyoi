@@ -37,16 +37,20 @@
     timerInterval: null,
     showEma9: true,
     showEma21: true,
+    showEma50: true,
     showStoch: true,
     showSignals: true,
     showVolume: true,
+    showSrLevels: true,
     recentTrades: [],
     recentTradesBuffer: [],
     scalperMarkers: [],
     currentEma9: null,
     currentEma21: null,
+    currentEma50: null,
     baseEma9: null,   // Committed EMA9 value from last closed candle
     baseEma21: null,  // Committed EMA21 value from last closed candle
+    baseEma50: null,  // Committed EMA50 value from last closed candle
     currentStochK: null,
     currentStochD: null,
     stochKMap: new Map(),
@@ -57,6 +61,9 @@
     buyZoneLowerLine: null,
     sellZoneUpperLine: null,
     sellZoneLowerLine: null,
+    srPriceLines: [],
+    p0AnalysisData: null,
+    p0PeriodicTimer: null,
     highPrice24h: null,
     lowPrice24h: null,
     openPrice24h: null,
@@ -81,7 +88,7 @@
     wsStatusText: document.getElementById('wsStatusText'),
     quickPairs: document.getElementById('quickPairs'),
     intervalSelector: document.getElementById('intervalSelector'),
-    // Scalper Radar Elements
+    // Scalper Radar Elements & P0 Components
     radarSignalBadge: document.getElementById('radarSignalBadge'),
     radarSignalText: document.getElementById('radarSignalText'),
     cfTrend: document.getElementById('cfTrend'),
@@ -97,6 +104,16 @@
     radarZoneStatusPill: document.getElementById('radarZoneStatusPill'),
     radarZoneStatusText: document.getElementById('radarZoneStatusText'),
     toggleZones: document.getElementById('toggleZones'),
+    // P0 MTF & Structure Elements
+    mtf1h: document.getElementById('mtf1h'),
+    mtf15m: document.getElementById('mtf15m'),
+    mtf5m: document.getElementById('mtf5m'),
+    mtf1m: document.getElementById('mtf1m'),
+    mtfSummaryText: document.getElementById('mtfSummaryText'),
+    structureTrendBadge: document.getElementById('structureTrendBadge'),
+    bosChochBadge: document.getElementById('bosChochBadge'),
+    rvolBadge: document.getElementById('rvolBadge'),
+    atrBadge: document.getElementById('atrBadge'),
     // Coin Modal Trigger & Elements
     searchPairBtn: document.getElementById('searchPairBtn'),
     selectorCurrentCoin: document.getElementById('selectorCurrentCoin'),
@@ -127,6 +144,7 @@
     legendVol: document.getElementById('legendVol'),
     legendEma9: document.getElementById('legendEma9'),
     legendEma21: document.getElementById('legendEma21'),
+    legendEma50: document.getElementById('legendEma50'),
     legendStochK: document.getElementById('legendStochK'),
     legendStochD: document.getElementById('legendStochD'),
     stochKBadgeVal: document.getElementById('stochKBadgeVal'),
@@ -135,6 +153,8 @@
     // Toggles
     toggleEma9: document.getElementById('toggleEma9'),
     toggleEma21: document.getElementById('toggleEma21'),
+    toggleEma50: document.getElementById('toggleEma50'),
+    toggleSrLevels: document.getElementById('toggleSrLevels'),
     toggleStoch: document.getElementById('toggleStoch'),
     toggleSignals: document.getElementById('toggleSignals'),
     toggleVolume: document.getElementById('toggleVolume'),
@@ -695,6 +715,157 @@
     }
   }
 
+  // --- P0 Support & Resistance Price Lines on Chart ---
+  function clearSrPriceLines() {
+    if (state.candleSeries && state.srPriceLines && state.srPriceLines.length > 0) {
+      for (const line of state.srPriceLines) {
+        try { state.candleSeries.removePriceLine(line); } catch (e) { }
+      }
+    }
+    state.srPriceLines = [];
+  }
+
+  function renderSrPriceLines(srData) {
+    clearSrPriceLines();
+    if (!state.showSrLevels || !state.candleSeries || !srData) return;
+
+    if (srData.nearest_support && srData.nearest_support.price) {
+      const sup = srData.nearest_support;
+      const supLine = state.candleSeries.createPriceLine({
+        price: sup.price,
+        color: '#10b981',
+        lineWidth: 1.5,
+        lineStyle: LightweightCharts.LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: `🟢 SUP (${sup.touches}x, -${sup.dist_pct}%)`,
+      });
+      state.srPriceLines.push(supLine);
+    }
+
+    if (srData.nearest_resistance && srData.nearest_resistance.price) {
+      const res = srData.nearest_resistance;
+      const resLine = state.candleSeries.createPriceLine({
+        price: res.price,
+        color: '#f43f5e',
+        lineWidth: 1.5,
+        lineStyle: LightweightCharts.LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: `🔴 RES (${res.touches}x, +${res.dist_pct}%)`,
+      });
+      state.srPriceLines.push(resLine);
+    }
+  }
+
+  // --- P0 Quantitative Scalping Analysis API & UI Integration ---
+  async function fetchP0Analysis(symbol, interval) {
+    if (!symbol) return;
+    try {
+      const activeInt = interval || state.interval || '1m';
+      const resp = await fetch(`/api/analysis/p0?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(activeInt)}`);
+      if (!resp.ok) return;
+      const data = await resp.json();
+      state.p0AnalysisData = data;
+      renderP0Analysis(data);
+    } catch (err) {
+      console.warn('Gagal memuat analisis P0:', err);
+    }
+  }
+
+  function renderP0Analysis(data) {
+    if (!data || data.error) return;
+
+    // 1. Multi-Timeframe (MTF) Confluence Matrix
+    if (data.mtf && data.mtf.timeframes) {
+      const tfs = data.mtf.timeframes;
+      const updatePill = (elem, tfKey) => {
+        if (!elem) return;
+        const info = tfs[tfKey];
+        if (!info) return;
+        const bias = info.bias || 'NEUTRAL';
+        elem.textContent = `${tfKey.toUpperCase()}: ${bias === 'BULLISH' ? 'BULL' : (bias === 'BEARISH' ? 'BEAR' : 'CHOP')}`;
+        elem.className = 'mtf-pill ' + (bias === 'BULLISH' ? 'bull' : (bias === 'BEARISH' ? 'bear' : 'range'));
+        elem.title = `${tfKey.toUpperCase()} - Bias: ${bias} | EMA: ${info.ema_alignment || '--'} | BOS: ${info.last_bos || 'None'}`;
+      };
+
+      updatePill(el.mtf1h, '1h');
+      updatePill(el.mtf15m, '15m');
+      updatePill(el.mtf5m, '5m');
+      updatePill(el.mtf1m, '1m');
+
+      if (el.mtfSummaryText) {
+        el.mtfSummaryText.textContent = data.mtf.score_ratio || '--/4';
+      }
+    }
+
+    // 2. Market Structure (BOS / CHoCH)
+    if (data.structure) {
+      if (el.structureTrendBadge) {
+        const trend = data.structure.trend || 'RANGE';
+        el.structureTrendBadge.textContent = `${trend} (${data.structure.structure_strength}%)`;
+        el.structureTrendBadge.className = 'structure-trend-badge ' + (trend === 'BULLISH' ? 'bull' : (trend === 'BEARISH' ? 'bear' : 'range'));
+      }
+      if (el.bosChochBadge) {
+        if (data.structure.last_choch) {
+          el.bosChochBadge.textContent = '⚡ CHoCH Reversal';
+          el.bosChochBadge.title = data.structure.last_choch.label || 'Change of Character';
+          el.bosChochBadge.style.display = 'inline-block';
+        } else if (data.structure.last_bos) {
+          const isBull = data.structure.last_bos.type === 'BULLISH_BOS';
+          el.bosChochBadge.textContent = isBull ? '🚀 Bull BOS' : '🔻 Bear BOS';
+          el.bosChochBadge.title = data.structure.last_bos.label || 'Break of Structure';
+          el.bosChochBadge.style.display = 'inline-block';
+        } else {
+          el.bosChochBadge.textContent = 'Structure Intact';
+          el.bosChochBadge.style.display = 'inline-block';
+        }
+      }
+    }
+
+    // 3. RVOL & Volatility ATR
+    if (data.volume && el.rvolBadge) {
+      el.rvolBadge.textContent = `RVOL: ${data.volume.rvol}x`;
+      el.rvolBadge.className = 'rvol-badge ' + (data.volume.is_spike ? 'spike' : '');
+      el.rvolBadge.title = `Volume saat ini vs 20 SMA (${data.volume.classification})`;
+    }
+    if (data.volatility && el.atrBadge) {
+      const cls = data.volatility.classification || 'NORMAL';
+      el.atrBadge.textContent = `ATR: ${data.volatility.atr_pct}% (${cls})`;
+      el.atrBadge.className = 'atr-badge ' + (cls === 'EXTREME' ? 'extreme' : '');
+      el.atrBadge.title = `ATR 14: ${data.volatility.atr} (${cls})`;
+    }
+
+    // 4. Render S/R lines on chart
+    if (data.support_resistance) {
+      renderSrPriceLines(data.support_resistance);
+      const ns = data.support_resistance.nearest_support;
+      const nr = data.support_resistance.nearest_resistance;
+      if (ns && el.radarBuyZoneVal) {
+        el.radarBuyZoneVal.textContent = `${formatPrice(ns.price, state.symbol)} (-${ns.dist_pct}%)`;
+      }
+      if (nr && el.radarSellZoneVal) {
+        el.radarSellZoneVal.textContent = `${formatPrice(nr.price, state.symbol)} (+${nr.dist_pct}%)`;
+      }
+    }
+
+    // 5. Radar Signal Badge override based on P0 Confluence
+    if (data.mtf && el.radarSignalBadge && el.radarSignalText) {
+      const act = data.mtf.actionable_bias;
+      if (act === 'LONG_STRONG') {
+        el.radarSignalBadge.className = 'radar-signal-badge buy';
+        el.radarSignalText.textContent = `🔥 STRONG LONG (MTF ${data.mtf.score_ratio})`;
+      } else if (act === 'LONG_ON_PULLBACK') {
+        el.radarSignalBadge.className = 'radar-signal-badge buy';
+        el.radarSignalText.textContent = `🟢 PULLBACK BUY DIP (MTF ${data.mtf.score_ratio})`;
+      } else if (act === 'SHORT_OR_EXIT' || act === 'SHORT_OR_EXIT_ON_PUMP') {
+        el.radarSignalBadge.className = 'radar-signal-badge sell';
+        el.radarSignalText.textContent = `⚠️ BEARISH CAUTION (MTF ${data.mtf.score_ratio})`;
+      } else {
+        el.radarSignalBadge.className = 'radar-signal-badge neutral';
+        el.radarSignalText.textContent = `⚖️ WAIT / CHOPPY (${data.mtf.confluence_summary})`;
+      }
+    }
+  }
+
   // --- TradingView Chart Initialization (Main Chart + StochRSI Sub-chart) ---
   function initChart() {
     if (!window.LightweightCharts) {
@@ -849,6 +1020,16 @@
       lastValueVisible: true,
       crosshairMarkerVisible: true,
       title: 'EMA 21',
+    });
+
+    // EMA 50 Series (Purple - Garis Makro P0)
+    state.ema50Series = state.chart.addLineSeries({
+      color: '#a855f7',
+      lineWidth: 2,
+      priceLineVisible: false,
+      lastValueVisible: true,
+      crosshairMarkerVisible: true,
+      title: 'EMA 50',
     });
 
     // 2. STOCHASTIC RSI SUB-CHART (Panel Bawah)
@@ -1014,6 +1195,7 @@
       const volume = param.seriesData.get(state.volumeSeries);
       const ema9 = param.seriesData.get(state.ema9Series);
       const ema21 = param.seriesData.get(state.ema21Series);
+      const ema50 = state.ema50Series ? param.seriesData.get(state.ema50Series) : null;
 
       // Lookup exact Stoch RSI %K & %D values for this hovered candle timestamp
       const kVal = state.stochKMap ? state.stochKMap.get(param.time) : null;
@@ -1031,7 +1213,7 @@
         el.stochDBadgeVal.textContent = stochD.value.toFixed(1);
       }
 
-      renderLegendData(param.time, candle, volume, ema9, ema21, stochK, stochD);
+      renderLegendData(param.time, candle, volume, ema9, ema21, ema50, stochK, stochD);
     });
 
     // Clear synced crosshair when mouse leaves main chart container
@@ -1102,7 +1284,7 @@
     syncPriceScaleWidths();
   }
 
-  function renderLegendData(time, candle, volume, ema9, ema21, stochK, stochD) {
+  function renderLegendData(time, candle, volume, ema9, ema21, ema50, stochK, stochD) {
     el.legendPair.textContent = state.symbol;
     el.legendInterval.textContent = state.interval;
     el.legendTime.textContent = formatDate(time);
@@ -1125,6 +1307,7 @@
 
     if (el.legendEma9) el.legendEma9.textContent = ema9 ? formatPrice(ema9.value, state.symbol) : '--';
     if (el.legendEma21) el.legendEma21.textContent = ema21 ? formatPrice(ema21.value, state.symbol) : '--';
+    if (el.legendEma50) el.legendEma50.textContent = ema50 ? formatPrice(ema50.value, state.symbol) : '--';
     if (el.legendStochK) el.legendStochK.textContent = stochK ? stochK.value.toFixed(1) : '--';
     if (el.legendStochD) el.legendStochD.textContent = stochD ? stochD.value.toFixed(1) : '--';
   }
@@ -1137,6 +1320,7 @@
       { value: state.lastCandle.volume },
       state.currentEma9 !== null ? { value: state.currentEma9 } : null,
       state.currentEma21 !== null ? { value: state.currentEma21 } : null,
+      state.currentEma50 !== null ? { value: state.currentEma50 } : null,
       state.currentStochK !== null ? { value: state.currentStochK } : null,
       state.currentStochD !== null ? { value: state.currentStochD } : null
     );
@@ -1279,11 +1463,13 @@
       state.candleSeries.setData(candles);
       state.volumeSeries.setData(volumes);
 
-      // Compute & Populate EMA 9 & EMA 21 (Metode 1: Trend Ribbon)
+      // Compute & Populate EMA 9, EMA 21, and EMA 50 (P0 Momentum Engine)
       const ema9Data = calculateEMA(candles, 9);
       const ema21Data = calculateEMA(candles, 21);
+      const ema50Data = calculateEMA(candles, 50);
       if (state.ema9Series) state.ema9Series.setData(ema9Data);
       if (state.ema21Series) state.ema21Series.setData(ema21Data);
+      if (state.ema50Series) state.ema50Series.setData(ema50Data);
 
       // Compute & Populate Stochastic RSI (14, 14, 3, 3)
       const stochData = calculateStochRSI(candles, 14, 14, 3, 3);
@@ -1304,6 +1490,7 @@
       // Track latest indicator values
       const lastE9 = ema9Data.length > 0 ? ema9Data[ema9Data.length - 1].value : null;
       const lastE21 = ema21Data.length > 0 ? ema21Data[ema21Data.length - 1].value : null;
+      const lastE50 = ema50Data.length > 0 ? ema50Data[ema50Data.length - 1].value : null;
       const lastK = stochData.kData.length > 0 ? stochData.kData[stochData.kData.length - 1].value : null;
       const lastD = stochData.dData.length > 0 ? stochData.dData[stochData.dData.length - 1].value : null;
 
@@ -1311,6 +1498,8 @@
       state.baseEma9 = lastE9;
       state.currentEma21 = lastE21;
       state.baseEma21 = lastE21;
+      state.currentEma50 = lastE50;
+      state.baseEma50 = lastE50;
       state.currentStochK = lastK;
       state.currentStochD = lastD;
 
@@ -1319,6 +1508,9 @@
       if (el.stochKBadgeVal && lastK !== null) el.stochKBadgeVal.textContent = lastK.toFixed(1);
       if (el.stochDBadgeVal && lastD !== null) el.stochDBadgeVal.textContent = lastD.toFixed(1);
       if (el.stochHoverTime && last) el.stochHoverTime.textContent = formatTime(last.time, true);
+
+      // Trigger P0 Quantitative Scalping Analysis
+      fetchP0Analysis(state.symbol, state.interval);
 
       // Compute & Render Dynamic Buy & Sell Zones
       const initialZones = calculateBuySellZones(candles);
@@ -1559,6 +1751,13 @@
       state.currentEma21 = liveEma21;
     }
 
+    if (state.baseEma50 !== null) {
+      const k50 = 2 / (50 + 1);
+      const liveEma50 = (c - state.baseEma50) * k50 + state.baseEma50;
+      if (state.ema50Series) state.ema50Series.update({ time: candleTime, value: liveEma50 });
+      state.currentEma50 = liveEma50;
+    }
+
     // Dynamic Live Recalculation of StochRSI on every price tick
     if (state.candlesCache && state.candlesCache.length >= 15) {
       const liveStoch = calculateStochRSI(state.candlesCache, 14, 14, 3, 3);
@@ -1585,8 +1784,10 @@
     if (isClosed && state.candlesCache && state.candlesCache.length >= 15) {
       const ema9Data = calculateEMA(state.candlesCache, 9);
       const ema21Data = calculateEMA(state.candlesCache, 21);
+      const ema50Data = calculateEMA(state.candlesCache, 50);
       if (state.ema9Series) state.ema9Series.setData(ema9Data);
       if (state.ema21Series) state.ema21Series.setData(ema21Data);
+      if (state.ema50Series) state.ema50Series.setData(ema50Data);
 
       const stochData = calculateStochRSI(state.candlesCache, 14, 14, 3, 3);
       state.stochKMap = new Map(stochData.kData.map(d => [d.time, d.value]));
@@ -1610,6 +1811,10 @@
         state.currentEma21 = ema21Data[ema21Data.length - 1].value;
         state.baseEma21 = state.currentEma21;  // Commit base for next tick calculations
       }
+      if (ema50Data.length > 0) {
+        state.currentEma50 = ema50Data[ema50Data.length - 1].value;
+        state.baseEma50 = state.currentEma50;
+      }
       if (stochData.kData.length > 0) state.currentStochK = stochData.kData[stochData.kData.length - 1].value;
       if (stochData.dData.length > 0) state.currentStochD = stochData.dData[stochData.dData.length - 1].value;
 
@@ -1618,6 +1823,9 @@
       if (refreshedZones) {
         updateBuySellZones(refreshedZones, c);
       }
+
+      // Re-trigger P0 analysis on closed candle
+      fetchP0Analysis(state.symbol, state.interval);
     }
 
     // Perbarui Radar Scalper (Metode 1) secara real-time
@@ -2291,6 +2499,26 @@
       });
     }
 
+    if (el.toggleEma50) {
+      el.toggleEma50.addEventListener('click', () => {
+        state.showEma50 = !state.showEma50;
+        el.toggleEma50.classList.toggle('active', state.showEma50);
+        if (state.ema50Series) state.ema50Series.applyOptions({ visible: state.showEma50 });
+      });
+    }
+
+    if (el.toggleSrLevels) {
+      el.toggleSrLevels.addEventListener('click', () => {
+        state.showSrLevels = !state.showSrLevels;
+        el.toggleSrLevels.classList.toggle('active', state.showSrLevels);
+        if (state.showSrLevels && state.p0AnalysisData) {
+          renderSrPriceLines(state.p0AnalysisData.support_resistance);
+        } else {
+          clearSrPriceLines();
+        }
+      });
+    }
+
     if (el.toggleStoch) {
       el.toggleStoch.addEventListener('click', () => {
         state.showStoch = !state.showStoch;
@@ -2369,6 +2597,12 @@
     loadSymbols();
     await loadHistoricalData();
     connectWebSocket();
+
+    // Periodic 12s refresh for P0 Quantitative Analysis
+    if (state.p0PeriodicTimer) clearInterval(state.p0PeriodicTimer);
+    state.p0PeriodicTimer = setInterval(() => {
+      fetchP0Analysis(state.symbol, state.interval);
+    }, 12000);
   }
 
   // Start on DOM ready
