@@ -95,6 +95,8 @@
     wsStatusText: document.getElementById('wsStatusText'),
     quickPairs: document.getElementById('quickPairs'),
     intervalSelector: document.getElementById('intervalSelector'),
+    toggleRadarHudBtn: document.getElementById('toggleRadarHudBtn'),
+    scalperRadar: document.getElementById('scalperRadar'),
     // Scalper Radar Elements & P0 Components
     radarSignalBadge: document.getElementById('radarSignalBadge'),
     radarSignalText: document.getElementById('radarSignalText'),
@@ -115,6 +117,8 @@
     radarZoneStatusPill: document.getElementById('radarZoneStatusPill'),
     radarZoneStatusText: document.getElementById('radarZoneStatusText'),
     toggleZones: document.getElementById('toggleZones'),
+    supplyZoneBlock: document.getElementById('supplyZoneBlock'),
+    demandZoneBlock: document.getElementById('demandZoneBlock'),
     // BTC Market Gatekeeper
     btcGatekeeperBadge: document.getElementById('btcGatekeeperBadge'),
     btcGatekeeperText: document.getElementById('btcGatekeeperText'),
@@ -391,7 +395,7 @@
 
     let lastBuyIdx = -10;   // Index of last BUY signal (for cooldown)
     let lastSellIdx = -10;  // Index of last SELL signal (for cooldown)
-    const COOLDOWN = 3;     // Min candles between same-type signals
+    const COOLDOWN = 6;     // Min candles between same-type signals to prevent clutter
 
     for (let i = 3; i < candles.length; i++) {
       const c = candles[i];
@@ -416,17 +420,10 @@
       }
 
       // === BUY SIGNAL (Scalp Entry) ===
-      // Condition 1: Micro-trend Bullish — EMA 9 >= EMA 21 AND close >= EMA 9
       const isBullTrend = e9 >= e21 && c.close >= e9;
-
-      // Condition 2: StochRSI momentum cross-up from oversold zone
-      //   - K crossed above D (prevK <= prevD && k > d)
-      //   - Cross originates from oversold area: prevK <= 30 (deep oversold)
-      //     OR both prevK < 45 AND k < 55 (rebound zone, softer)
       const isStochCrossUp = prevK <= prevD && k > d;
       const isFromOversold = prevK <= 30 || (prevK < 45 && k < 55);
 
-      // Condition 3: Bullish candle body confirmation (close > open, not a doji)
       const bodySize = Math.abs(c.close - c.open);
       const candleRange = c.high - c.low;
       const isBullishCandle = c.close > c.open && bodySize > candleRange * 0.2;
@@ -438,47 +435,38 @@
           color: '#10b981',
           shape: 'arrowUp',
           text: 'BUY',
-          size: 1.2,
+          size: 1.0,
         });
         lastBuyIdx = i;
         continue;
       }
 
       // === SELL / EXIT / TP SIGNAL ===
-
-      // Type A: Take-Profit Exit — StochRSI overbought cross-down
-      //   - K was >= 75 (overbought territory) and crosses below D
-      //   - Confirmed: prevK >= prevD && k < d (actual crossover)
-      //   - Stronger if bearish candle (close < open)
       const isStochOverboughtCross = prevK >= prevD && k < d && prevK >= 75;
       const isBearishCandle = c.close < c.open;
-
-      // Type B: Cut Loss / Trend-Break Exit
-      //   - Close breaks below EMA 9 (was above) AND EMA 9 < EMA 21 (bearish shift)
-      //   - OR Close breaks below EMA 21 (strong bearish momentum)
       const isTrendBreakSoft = c.close < e9 && prevC.close >= e9 && e9 < e21;
       const isTrendBreakHard = c.close < e21 && prevC.close >= e21;
 
       if (isStochOverboughtCross && (i - lastSellIdx) >= COOLDOWN) {
-        // TP/EXIT: Momentum exhaustion from overbought
+        // TP: Momentum exhaustion from overbought
         markers.push({
           time: c.time,
           position: 'aboveBar',
           color: '#f59e0b',
           shape: 'arrowDown',
-          text: 'TP/EXIT',
-          size: 1.1,
+          text: 'TP',
+          size: 0.9,
         });
         lastSellIdx = i;
       } else if ((isTrendBreakSoft || isTrendBreakHard) && isBearishCandle && (i - lastSellIdx) >= COOLDOWN) {
-        // CUT: Trend structure breaking down
+        // EXIT: Trend breakdown
         markers.push({
           time: c.time,
           position: 'aboveBar',
           color: '#f43f5e',
           shape: 'arrowDown',
-          text: isTrendBreakHard ? 'CUT!' : 'CUT',
-          size: 1.1,
+          text: 'EXIT',
+          size: 0.9,
         });
         lastSellIdx = i;
       }
@@ -499,10 +487,10 @@
       isBear = e9 < e21 && price < e9;
       if (el.cfTrend) {
         if (isBull) {
-          el.cfTrend.textContent = '▲ Bullish (EMA 9 > 21, Close > EMA 9)';
+          el.cfTrend.textContent = '▲ Bullish';
           el.cfTrend.className = 'cf-value bull';
         } else if (isBear) {
-          el.cfTrend.textContent = '▼ Bearish (EMA 9 < 21, Close < EMA 9)';
+          el.cfTrend.textContent = '▼ Bearish';
           el.cfTrend.className = 'cf-value bear';
         } else {
           el.cfTrend.textContent = '— Transisi / Konsolidasi';
@@ -673,46 +661,8 @@
     // 1. Remove old price lines if existing
     clearZonePriceLines();
 
-    // 2. Draw price lines on candleSeries if showZones is true
-    if (state.showZones && state.candleSeries) {
-      // Sell Area (Supply)
-      state.sellZoneUpperLine = state.candleSeries.createPriceLine({
-        price: zones.sellMax,
-        color: 'rgba(244, 63, 94, 0.65)',
-        lineWidth: 1,
-        lineStyle: LightweightCharts.LineStyle.Dotted,
-        axisLabelVisible: true,
-        title: 'SELL TOP',
-      });
-
-      state.sellZoneLowerLine = state.candleSeries.createPriceLine({
-        price: zones.sellMin,
-        color: '#f43f5e',
-        lineWidth: 1.5,
-        lineStyle: LightweightCharts.LineStyle.Dashed,
-        axisLabelVisible: true,
-        title: 'AREA JUAL',
-      });
-
-      // Buy Area (Demand)
-      state.buyZoneUpperLine = state.candleSeries.createPriceLine({
-        price: zones.buyMax,
-        color: '#10b981',
-        lineWidth: 1.5,
-        lineStyle: LightweightCharts.LineStyle.Dashed,
-        axisLabelVisible: true,
-        title: 'AREA BELI',
-      });
-
-      state.buyZoneLowerLine = state.candleSeries.createPriceLine({
-        price: zones.buyMin,
-        color: 'rgba(16, 185, 129, 0.65)',
-        lineWidth: 1,
-        lineStyle: LightweightCharts.LineStyle.Dotted,
-        axisLabelVisible: true,
-        title: 'BUY BOTTOM',
-      });
-    }
+    // 2. Render shaded transparent blocks on chart
+    updateZoneBlocks();
 
     // 3. Update Scalper Radar Ribbon Zones Widget
     if (el.radarBuyZoneVal) {
@@ -725,27 +675,138 @@
     updateZoneStatusBadge(currentPrice);
   }
 
+  function updateZoneBlocks() {
+    if (!el.supplyZoneBlock || !el.demandZoneBlock) return;
+    if (!state.showZones || !state.currentZones || !state.candleSeries || !state.chart) {
+      el.supplyZoneBlock.style.display = 'none';
+      el.demandZoneBlock.style.display = 'none';
+      return;
+    }
+
+    const zones = state.currentZones;
+    const chartHeight = el.chartContainer ? el.chartContainer.clientHeight : 500;
+    const rightScaleWidth = state.chart ? (state.chart.priceScale('right').width() || 85) : 85;
+    el.supplyZoneBlock.style.right = `${rightScaleWidth}px`;
+    el.demandZoneBlock.style.right = `${rightScaleWidth}px`;
+
+    // Supply / Sell Zone block
+    const ySellTop = state.candleSeries.priceToCoordinate(zones.sellMax);
+    const ySellBottom = state.candleSeries.priceToCoordinate(zones.sellMin);
+
+    if (ySellTop !== null && ySellBottom !== null) {
+      const top = Math.min(ySellTop, ySellBottom);
+      const height = Math.max(Math.abs(ySellBottom - ySellTop), 6);
+      el.supplyZoneBlock.style.top = `${top}px`;
+      el.supplyZoneBlock.style.height = `${height}px`;
+      el.supplyZoneBlock.style.display = 'flex';
+    } else if (ySellTop !== null || ySellBottom !== null) {
+      const visibleY = ySellTop !== null ? ySellTop : ySellBottom;
+      const top = ySellTop !== null ? visibleY : 0;
+      const bottom = ySellBottom !== null ? visibleY : chartHeight;
+      el.supplyZoneBlock.style.top = `${Math.min(top, bottom)}px`;
+      el.supplyZoneBlock.style.height = `${Math.max(Math.abs(bottom - top), 6)}px`;
+      el.supplyZoneBlock.style.display = 'flex';
+    } else {
+      el.supplyZoneBlock.style.display = 'none';
+    }
+
+    // Demand / Buy Zone block
+    const yBuyTop = state.candleSeries.priceToCoordinate(zones.buyMax);
+    const yBuyBottom = state.candleSeries.priceToCoordinate(zones.buyMin);
+
+    if (yBuyTop !== null && yBuyBottom !== null) {
+      const top = Math.min(yBuyTop, yBuyBottom);
+      const height = Math.max(Math.abs(yBuyBottom - yBuyTop), 6);
+      el.demandZoneBlock.style.top = `${top}px`;
+      el.demandZoneBlock.style.height = `${height}px`;
+      el.demandZoneBlock.style.display = 'flex';
+    } else if (yBuyTop !== null || yBuyBottom !== null) {
+      const visibleY = yBuyTop !== null ? yBuyTop : yBuyBottom;
+      const top = yBuyTop !== null ? visibleY : 0;
+      const bottom = yBuyBottom !== null ? visibleY : chartHeight;
+      el.demandZoneBlock.style.top = `${Math.min(top, bottom)}px`;
+      el.demandZoneBlock.style.height = `${Math.max(Math.abs(bottom - top), 6)}px`;
+      el.demandZoneBlock.style.display = 'flex';
+    } else {
+      el.demandZoneBlock.style.display = 'none';
+    }
+  }
+
+  // Zero-latency RAF tracker for Zone Blocks during Pan, Drag & Zoom
+  let zoneBlocksRaf = null;
+  let isChartInteracting = false;
+
+  function scheduleZoneBlocksUpdate(frames = 1) {
+    let remaining = frames;
+    const loop = () => {
+      updateZoneBlocks();
+      remaining--;
+      if (remaining > 0 || isChartInteracting) {
+        zoneBlocksRaf = requestAnimationFrame(loop);
+      } else {
+        zoneBlocksRaf = null;
+      }
+    };
+    if (!zoneBlocksRaf) {
+      zoneBlocksRaf = requestAnimationFrame(loop);
+    }
+  }
+
+  function setupZoneBlocksInteractions() {
+    if (!el.chartContainer) return;
+
+    // Track mouse / touch drag on chart container
+    el.chartContainer.addEventListener('mousedown', () => {
+      isChartInteracting = true;
+      scheduleZoneBlocksUpdate(60);
+    });
+
+    window.addEventListener('mouseup', () => {
+      if (isChartInteracting) {
+        isChartInteracting = false;
+        scheduleZoneBlocksUpdate(30);
+      }
+    });
+
+    el.chartContainer.addEventListener('touchstart', () => {
+      isChartInteracting = true;
+      scheduleZoneBlocksUpdate(60);
+    }, { passive: true });
+
+    window.addEventListener('touchend', () => {
+      if (isChartInteracting) {
+        isChartInteracting = false;
+        scheduleZoneBlocksUpdate(30);
+      }
+    }, { passive: true });
+
+    // Wheel zoom on chart container
+    el.chartContainer.addEventListener('wheel', () => {
+      scheduleZoneBlocksUpdate(30);
+    }, { passive: true });
+  }
+
   function updateZoneStatusBadge(currentPrice) {
     const zones = state.currentZones;
     if (!zones || !el.radarZoneStatusPill || !el.radarZoneStatusText || !currentPrice) return;
 
     if (currentPrice <= zones.buyMax && currentPrice >= zones.buyMin) {
       el.radarZoneStatusPill.className = 'zone-status-pill in-buy';
-      el.radarZoneStatusText.textContent = 'DALAM AREA BELI (DEMAND)';
+      el.radarZoneStatusText.textContent = 'IN BUY AREA';
     } else if (currentPrice >= zones.sellMin && currentPrice <= zones.sellMax) {
       el.radarZoneStatusPill.className = 'zone-status-pill in-sell';
-      el.radarZoneStatusText.textContent = 'DALAM AREA JUAL (SUPPLY)';
+      el.radarZoneStatusText.textContent = 'IN SELL AREA';
     } else if (currentPrice < zones.buyMin) {
       el.radarZoneStatusPill.className = 'zone-status-pill in-buy';
-      el.radarZoneStatusText.textContent = 'DI BAWAH AREA BELI (DISCOUNT)';
+      el.radarZoneStatusText.textContent = 'BELOW BUY AREA';
     } else if (currentPrice > zones.sellMax) {
       el.radarZoneStatusPill.className = 'zone-status-pill in-sell';
-      el.radarZoneStatusText.textContent = 'DI ATAS AREA JUAL (BREAKOUT)';
+      el.radarZoneStatusText.textContent = 'ABOVE SELL AREA';
     } else {
       const distToBuy = (((currentPrice - zones.buyMax) / currentPrice) * 100).toFixed(2);
       const distToSell = (((zones.sellMin - currentPrice) / currentPrice) * 100).toFixed(2);
       el.radarZoneStatusPill.className = 'zone-status-pill neutral';
-      el.radarZoneStatusText.textContent = `-${distToBuy}% ke Beli | +${distToSell}% ke Jual`;
+      el.radarZoneStatusText.textContent = `-${distToBuy}% B | +${distToSell}% S`;
     }
   }
 
@@ -768,6 +829,8 @@
         state.sellZoneLowerLine = null;
       }
     }
+    if (el.supplyZoneBlock) el.supplyZoneBlock.style.display = 'none';
+    if (el.demandZoneBlock) el.demandZoneBlock.style.display = 'none';
   }
 
   // --- P0 Support & Resistance Price Lines on Chart ---
@@ -789,10 +852,10 @@
       const supLine = state.candleSeries.createPriceLine({
         price: sup.price,
         color: '#10b981',
-        lineWidth: 1.5,
+        lineWidth: 1.2,
         lineStyle: LightweightCharts.LineStyle.Dashed,
         axisLabelVisible: true,
-        title: `SUP (${sup.touches}x, -${sup.dist_pct}%)`,
+        title: `SUP -${sup.dist_pct}%`,
       });
       state.srPriceLines.push(supLine);
     }
@@ -802,10 +865,10 @@
       const resLine = state.candleSeries.createPriceLine({
         price: res.price,
         color: '#f43f5e',
-        lineWidth: 1.5,
+        lineWidth: 1.2,
         lineStyle: LightweightCharts.LineStyle.Dashed,
         axisLabelVisible: true,
-        title: `RES (${res.touches}x, +${res.dist_pct}%)`,
+        title: `RES +${res.dist_pct}%`,
       });
       state.srPriceLines.push(resLine);
     }
@@ -852,10 +915,10 @@
 
     if (status === 'DUMP_RISK') {
       badgeClass += ' dump-risk';
-      labelText = `BTC DUMP RISK ${price} (${ret})`;
+      labelText = `BTCDR ${price} (${ret})`;
     } else if (status === 'CAUTION') {
       badgeClass += ' caution';
-      labelText = `BTC Waspada ${price} (${ret})`;
+      labelText = `BTCW ${price} (${ret})`;
     } else if (status === 'SAFE') {
       badgeClass += ' safe';
       labelText = `BTC ${price} (${ret})`;
@@ -923,14 +986,14 @@
     _audioCtxHolder.lastAlertTime = now;
     if (ctx.state === 'suspended') ctx.resume();
     const configs = {
-      buy:   [{ freq: 523.25, dur: 0.12 }, { freq: 659.25, dur: 0.12 }, { freq: 783.99, dur: 0.18 }],
+      buy: [{ freq: 523.25, dur: 0.12 }, { freq: 659.25, dur: 0.12 }, { freq: 783.99, dur: 0.18 }],
       alert: [{ freq: 880.00, dur: 0.10 }, { freq: 1046.5, dur: 0.10 }, { freq: 880.00, dur: 0.10 }],
-      warn:  [{ freq: 440.00, dur: 0.15 }, { freq: 349.23, dur: 0.20 }],
+      warn: [{ freq: 440.00, dur: 0.15 }, { freq: 349.23, dur: 0.20 }],
     };
     const tones = configs[type] || configs.buy;
     let t = ctx.currentTime + 0.05;
-    tones.forEach(function(tone) {
-      const osc  = ctx.createOscillator();
+    tones.forEach(function (tone) {
+      const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.connect(gain);
       gain.connect(ctx.destination);
@@ -950,19 +1013,19 @@
   // ---------------------------------------------------------------------------
   function renderSignalScore(scoreData) {
     if (!scoreData) return;
-    const score    = scoreData.score || 0;
-    const cat      = scoreData.category || 'NO_TRADE';
+    const score = scoreData.score || 0;
+    const cat = scoreData.category || 'NO_TRADE';
     const catLabel = scoreData.category_label || '--';
     if (el.signalScoreCircle) {
       el.signalScoreCircle.textContent = score;
       el.signalScoreCircle.className = 'score-circle ' + (
         cat === 'VERY_STRONG' ? 'very-strong' :
-        cat === 'STRONG'      ? 'strong' :
-        cat === 'WATCH'       ? 'watch' :
-        cat === 'WEAK'        ? 'weak' : 'no-trade'
+          cat === 'STRONG' ? 'strong' :
+            cat === 'WATCH' ? 'watch' :
+              cat === 'WEAK' ? 'weak' : 'no-trade'
       );
       const bd = scoreData.breakdown || {};
-      el.signalScoreCircle.title = Object.entries(bd).map(function(e) { return e[0] + ': ' + e[1]; }).join(' | ');
+      el.signalScoreCircle.title = Object.entries(bd).map(function (e) { return e[0] + ': ' + e[1]; }).join(' | ');
     }
     if (el.signalScoreLabel) el.signalScoreLabel.textContent = catLabel;
   }
@@ -973,9 +1036,9 @@
       el.regimeBadge.textContent = regimeData.regime_label || '--';
       const r = regimeData.regime || 'RANGING';
       el.regimeBadge.className = 'regime-badge ' + (
-        r === 'TRENDING_UP'   ? 'bull' :
-        r === 'TRENDING_DOWN' ? 'bear' :
-        r === 'HIGH_VOL'      ? 'high-vol' : 'range'
+        r === 'TRENDING_UP' ? 'bull' :
+          r === 'TRENDING_DOWN' ? 'bear' :
+            r === 'HIGH_VOL' ? 'high-vol' : 'range'
       );
       el.regimeBadge.title = 'Scalp Filter: ' + (regimeData.scalp_filter || '--');
     }
@@ -1000,22 +1063,28 @@
       return;
     }
     el.radarSetupsGroup.style.display = 'flex';
-    var html = setups.map(function(s) {
+    var html = setups.map(function (s) {
       var qClass = s.quality === 'STRONG' ? 'setup-strong' : (s.quality === 'MODERATE' ? 'setup-moderate' : 'setup-weak');
-      var entry  = s.entry_zone ? formatPrice(s.entry_zone[0], state.symbol) + ' \u2013 ' + formatPrice(s.entry_zone[1], state.symbol) : '--';
-      var conds  = (s.conditions_met || []).join(' \xB7 ');
+      var isLong = (s.direction === 'LONG') || (s.label && s.label.toLowerCase().includes('long'));
+      var dirBadge = isLong
+        ? '<span class="setup-dir long"><span class="dir-arrow">↑</span> LONG</span>'
+        : '<span class="setup-dir short"><span class="dir-arrow">↓</span> SHORT</span>';
+      var cleanLabel = (s.label || '').replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}🟢🔴🔻🔺⚡🚀]/gu, '').trim();
+      var entry = s.entry_zone ? formatPrice(s.entry_zone[0], state.symbol) + ' – ' + formatPrice(s.entry_zone[1], state.symbol) : '--';
+      var conds = (s.conditions_met || []).join(' · ');
       return '<div class="setup-item ' + qClass + '" title="' + conds + '">'
-        + '<span class="setup-label">' + s.label + '</span>'
+        + dirBadge
+        + '<span class="setup-label">' + cleanLabel + '</span>'
         + '<span class="setup-quality-tag">' + s.quality + '</span>'
-        + '<span class="setup-entry">Entry: ' + entry + '</span>'
+        + '<span class="setup-entry"><span class="setup-entry-lbl">Entry:</span> <span class="mono">' + entry + '</span></span>'
         + '</div>';
     }).join('');
     el.setupsList.innerHTML = html;
     if (el.signalTtlBadge && ttl) {
       var ttlClass = ttl.ttl_status === 'EXPIRED' ? 'ttl-expired' : (ttl.ttl_status === 'EXPIRING_SOON' ? 'ttl-warn' : 'ttl-active');
       el.signalTtlBadge.textContent = ttl.is_expired
-        ? '\u23F0 EXPIRED'
-        : '\u23F1 TTL: ' + ttl.candles_remaining + ' candle (' + ttl.seconds_remaining + 's)';
+        ? 'EXPIRED'
+        : 'TTL: ' + ttl.candles_remaining + ' candle (' + ttl.seconds_remaining + 's)';
       el.signalTtlBadge.className = 'ttl-badge ' + ttlClass;
     }
   }
@@ -1034,21 +1103,21 @@
 
     try {
       const params = new URLSearchParams({
-        symbol:       state.symbol,
-        interval:     state.interval,
-        entry_price:  tp1.entry,
-        tp1_price:    tp1.tp,
-        tp2_price:    tp2.tp,
-        sl_price:     tp1.sl,
+        symbol: state.symbol,
+        interval: state.interval,
+        entry_price: tp1.entry,
+        tp1_price: tp1.tp,
+        tp2_price: tp2.tp,
+        sl_price: tp1.sl,
         signal_score: p0Data.signal_score ? p0Data.signal_score.score : 0,
-        setup_type:   bestSetup.type,
-        notify:       'true',
+        setup_type: bestSetup.type,
+        notify: 'true',
       });
       const resp = await fetch('/api/trade/open?' + params.toString(), { method: 'POST' });
       if (!resp.ok) return;
       const data = await resp.json();
       state.activeTradeId = data.trade_id;
-      state.activeTrade   = data.trade;
+      state.activeTrade = data.trade;
       renderTradeState(data.trade);
       startTradeUpdateLoop();
     } catch (e) {
@@ -1060,9 +1129,9 @@
     if (!state.activeTradeId || !state.lastPrice) return;
     try {
       const params = new URLSearchParams({
-        trade_id:      state.activeTradeId,
+        trade_id: state.activeTradeId,
         current_price: state.lastPrice,
-        notify:        'true',
+        notify: 'true',
       });
       const resp = await fetch('/api/trade/update?' + params.toString(), { method: 'POST' });
       if (!resp.ok) return;
@@ -1071,7 +1140,7 @@
       renderTradeState(data.trade);
 
       // Stop auto-update jika state terminal
-      const terminal = new Set(['TP2_HIT','STOPPED_BE','STOPPED_OUT','EXPIRED','INVALIDATED']);
+      const terminal = new Set(['TP2_HIT', 'STOPPED_BE', 'STOPPED_OUT', 'EXPIRED', 'INVALIDATED']);
       if (terminal.has(data.new_state)) stopTradeUpdateLoop();
     } catch (e) {
       console.warn('updateTrade error:', e);
@@ -1094,16 +1163,16 @@
     el.tradeStatePanel.style.display = 'flex';
     const s = trade.state;
     const labels = {
-      DETECTED:         '🔍 Terdeteksi',
-      PENDING_ENTRY:    '⏳ Menunggu Entry',
-      ACTIVE:           '🟢 AKTIF',
-      TP1_HIT:          '✅ TP1 Hit',
-      BREAKEVEN_ACTIVE: '🔒 Breakeven',
-      TP2_HIT:          '🎯 TP2 Hit',
-      STOPPED_BE:       '🔐 Stop BE',
-      STOPPED_OUT:      '❌ Stop Loss',
-      EXPIRED:          '⏰ Expired',
-      INVALIDATED:      '⚠️ Invalid',
+      DETECTED: 'Terdeteksi',
+      PENDING_ENTRY: 'Menunggu Entry',
+      ACTIVE: 'AKTIF',
+      TP1_HIT: 'TP1 Hit',
+      BREAKEVEN_ACTIVE: 'Breakeven',
+      TP2_HIT: 'TP2 Hit',
+      STOPPED_BE: 'Stop BE',
+      STOPPED_OUT: 'Stop Loss',
+      EXPIRED: 'Expired',
+      INVALIDATED: 'Invalid',
     };
     const cls = {
       ACTIVE: 'active', TP1_HIT: 'tp1', BREAKEVEN_ACTIVE: 'be',
@@ -1119,8 +1188,8 @@
     el.tradeStateText.textContent = info;
 
     if (el.openTradeBtn) {
-      const terminal = new Set(['TP2_HIT','STOPPED_BE','STOPPED_OUT','EXPIRED','INVALIDATED']);
-      el.openTradeBtn.textContent = terminal.has(s) ? '📋 Buka Trade Baru' : '⏸ Trade Aktif';
+      const terminal = new Set(['TP2_HIT', 'STOPPED_BE', 'STOPPED_OUT', 'EXPIRED', 'INVALIDATED']);
+      el.openTradeBtn.textContent = terminal.has(s) ? 'Buka Trade Baru' : 'Trade Aktif';
       el.openTradeBtn.disabled = !terminal.has(s) && s !== 'DETECTED';
     }
   }
@@ -1165,7 +1234,7 @@
           el.bosChochBadge.style.display = 'inline-block';
         } else if (data.structure.last_bos) {
           const isBull = data.structure.last_bos.type === 'BULLISH_BOS';
-          el.bosChochBadge.textContent = isBull ? 'Bull BOS' : '🔻Bear BOS';
+          el.bosChochBadge.textContent = isBull ? 'Bull BOS' : 'Bear BOS';
           el.bosChochBadge.title = data.structure.last_bos.label || 'Break of Structure';
           el.bosChochBadge.style.display = 'inline-block';
         } else {
@@ -1294,7 +1363,28 @@
     if (data.signal_score) renderSignalScore(data.signal_score);
 
     // 10. Setup Detection + TTL (P1)
-    renderSetups(data.setups, data.signal_ttl);
+    const setupsToRender = (data.setups && data.setups.length > 0)
+      ? data.setups
+      : (window.location.search.includes('testSetups') ? [
+        {
+          type: 'TREND_PULLBACK',
+          direction: 'LONG',
+          label: 'Trend Pullback (Long)',
+          quality: 'STRONG',
+          entry_zone: [78850.0, 78920.0],
+          conditions_met: ['EMA 9 > 21', 'Bullish BOS', 'Stoch Oversold']
+        },
+        {
+          type: 'BREAKOUT_RETEST',
+          direction: 'LONG',
+          label: 'Breakout Retest (Long)',
+          quality: 'MODERATE',
+          entry_zone: [79100.0, 79150.0],
+          conditions_met: ['RVOL > 1.2x', 'Retest Resistance Flip']
+        }
+      ] : []);
+    const ttlToRender = data.signal_ttl || (window.location.search.includes('testSetups') ? { is_expired: false, candles_remaining: 3, seconds_remaining: 180, ttl_status: 'ACTIVE' } : null);
+    renderSetups(setupsToRender, ttlToRender);
 
     // 11. Audio Alert — chime saat sinyal STRONG+ dan setup terdeteksi
     if (data.signal_score && data.setups && data.setups.length > 0) {
@@ -1380,8 +1470,8 @@
         autoScale: true,
         minimumWidth: 85,
         scaleMargins: {
-          top: 0.12,
-          bottom: 0.22,
+          top: 0.16,
+          bottom: 0.20,
         },
         alignLabels: true,
       },
@@ -1423,6 +1513,15 @@
     };
 
     state.chart = LightweightCharts.createChart(el.chartContainer, chartOptions);
+
+    // Subscribe range changes to keep zone blocks perfectly aligned during pan & zoom
+    state.chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+      scheduleZoneBlocksUpdate(5);
+    });
+    state.chart.timeScale().subscribeVisibleTimeRangeChange(() => {
+      scheduleZoneBlocksUpdate(5);
+    });
+    setupZoneBlocksInteractions();
 
     // Candlestick Series
     state.candleSeries = state.chart.addCandlestickSeries({
@@ -1638,6 +1737,9 @@
 
     // Crosshair handler on main chart -> syncs vertical cursor to stochChart
     state.chart.subscribeCrosshairMove((param) => {
+      if (isChartInteracting) {
+        updateZoneBlocks();
+      }
       if (!param.time || !param.seriesData || !param.seriesData.get(state.candleSeries)) {
         if (state.stochChart) {
           try { state.stochChart.clearCrosshairPosition(); } catch (e) { }
@@ -1719,6 +1821,7 @@
         state.chart.priceScale('right').applyOptions({ minimumWidth: targetWidth });
         state.stochChart.priceScale('right').applyOptions({ minimumWidth: targetWidth });
       }
+      updateZoneBlocks();
     } catch (e) { }
   }
 
@@ -2245,6 +2348,15 @@
       }
       if (el.stochHoverTime) {
         el.stochHoverTime.textContent = formatTime(candleTime, true);
+      }
+    }
+
+    // Dynamic Live Recalculation of RSI(14) on every price tick (fixes 1-minute lag)
+    if (state.rsiSeries && state.candlesCache && state.candlesCache.length >= 15) {
+      const liveRsi = calculateRSI(state.candlesCache, 14);
+      if (liveRsi.length > 0) {
+        const lastRsi = liveRsi[liveRsi.length - 1];
+        state.rsiSeries.update(lastRsi);
       }
     }
 
@@ -2776,8 +2888,8 @@
     if (list.length === 0) {
       el.pairSearchResults.innerHTML = `
         <div style="padding: 40px; color: var(--text-muted); text-align: center;">
-          <div style="font-size: 2rem; margin-bottom: 8px;">🔍</div>
-          <div>Tidak ada koin yang cocok dengan pencarian "<b>${query}</b>"</div>
+          <div style="font-size: 1.1rem; font-weight: 500; margin-bottom: 6px; color: var(--text-secondary);">Tidak ada hasil</div>
+          <div style="font-size: 0.85rem;">Tidak ada koin yang cocok dengan pencarian "<b>${query}</b>"</div>
         </div>
       `;
       return;
@@ -3035,6 +3147,32 @@
       }
     });
 
+    // Toggle Scalper Radar HUD
+    if (el.toggleRadarHudBtn && el.scalperRadar) {
+      const applyHudState = (collapsed) => {
+        el.scalperRadar.classList.toggle('is-collapsed', collapsed);
+        if (el.radarSetupsGroup) {
+          el.radarSetupsGroup.classList.toggle('is-collapsed', collapsed);
+        }
+        el.toggleRadarHudBtn.classList.toggle('active', !collapsed);
+        el.toggleRadarHudBtn.classList.toggle('inactive', collapsed);
+        localStorage.setItem('kriptoyoi_hud_visible', !collapsed);
+        setTimeout(resizeCharts, 50);
+        setTimeout(resizeCharts, 200);
+      };
+
+      // Check user preference saved in localStorage (default is visible)
+      const savedHud = localStorage.getItem('kriptoyoi_hud_visible');
+      if (savedHud === 'false') {
+        applyHudState(true);
+      }
+
+      el.toggleRadarHudBtn.addEventListener('click', () => {
+        const willCollapse = !el.scalperRadar.classList.contains('is-collapsed');
+        applyHudState(willCollapse);
+      });
+    }
+
     // Open Trade button
     if (el.openTradeBtn) {
       el.openTradeBtn.addEventListener('click', () => {
@@ -3047,7 +3185,7 @@
       el.tradeCloseBtn.addEventListener('click', () => {
         stopTradeUpdateLoop();
         state.activeTradeId = null;
-        state.activeTrade   = null;
+        state.activeTrade = null;
         if (el.tradeStatePanel) el.tradeStatePanel.style.display = 'none';
       });
     }

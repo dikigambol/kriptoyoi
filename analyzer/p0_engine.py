@@ -133,20 +133,20 @@ def calculate_net_rr(
 
     if net_profit <= 0:
         viability_status = "NO_TRADE_NEGATIVE_NET_PROFIT"
-        viability_label = "❌ NO TRADE – TP Tertutup Fee"
+        viability_label = "NO TRADE – TP Tertutup Fee"
     elif not is_fee_viable:
         if not is_tp_dist_ok:
             viability_status = "NO_TRADE_TP_TOO_CLOSE"
-            viability_label = f"❌ NO TRADE – TP Terlalu Dekat ({tp_friction_mult:.1f}× friction, min {_MIN_TP_FRICTION_MULT}×)"
+            viability_label = f"NO TRADE – TP Terlalu Dekat ({tp_friction_mult:.1f}× friction, min {_MIN_TP_FRICTION_MULT}×)"
         else:
             viability_status = "NO_TRADE_FEE_UNVIABLE"
-            viability_label = f"⚠️ FEE UNVIABLE – Net R:R {net_rr:.2f} (min {_MIN_NET_RR})"
+            viability_label = f"FEE UNVIABLE – Net R:R {net_rr:.2f} (min {_MIN_NET_RR})"
     elif net_rr >= 2.0:
         viability_status = "VIABLE_STRONG"
-        viability_label = f"✅ VIABLE – Net R:R {net_rr:.2f} (Kuat)"
+        viability_label = f"VIABLE – Net R:R {net_rr:.2f} (Kuat)"
     else:
         viability_status = "VIABLE"
-        viability_label = f"✅ VIABLE – Net R:R {net_rr:.2f}"
+        viability_label = f"VIABLE – Net R:R {net_rr:.2f}"
 
     return {
         "entry": round(entry_price, 8),
@@ -789,18 +789,18 @@ def analyze_btc_pulse(
     # Tetapkan status label
     if veto_active:
         status = "DUMP_RISK"
-        status_label = "🚨 BTC DUMP RISK – Long Altcoin di-VETO"
+        status_label = "BTC DUMP RISK – Long Altcoin di-VETO"
     elif cond1_ema and not cond1_return:
         # Di bawah EMA tapi belum speed yang cukup → warning ringan
         status = "CAUTION"
-        status_label = "⚠️ BTC di Bawah EMA20 – Waspadai"
+        status_label = "BTC di Bawah EMA20 – Waspadai"
     elif btc_return_5m < -0.003:
         # Koreksi sedang tapi belum trigger veto
         status = "CAUTION"
-        status_label = f"⚠️ BTC Koreksi ({btc_return_5m*100:.2f}%) – Hati-hati"
+        status_label = f"BTC Koreksi ({btc_return_5m*100:.2f}%) – Hati-hati"
     else:
         status = "SAFE"
-        status_label = "✅ BTC Stabil – Long Altcoin Diizinkan"
+        status_label = "BTC Stabil – Long Altcoin Diizinkan"
 
     return {
         "dump_risk": veto_active,
@@ -956,7 +956,7 @@ def analyze_market_regime(candles: List[Dict[str, Any]]) -> Dict[str, Any]:
     if len(candles) < 30:
         return {
             "regime": "RANGING",
-            "regime_label": "⚖️ Insufficient Data",
+            "regime_label": "Insufficient Data",
             "chop": 50.0,
             "adx": 20.0,
             "plus_di": 0.0,
@@ -993,28 +993,28 @@ def analyze_market_regime(candles: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     if atr_class == "EXTREME":
         regime = "HIGH_VOL"
-        regime_label = "🌪️ High Volatility – Hati-hati"
+        regime_label = "High Volatility"
         scalp_filter  = "CAUTION"
     elif atr_class == "LOW" and chop > 55:
         regime = "LOW_VOL"
-        regime_label = "😴 Low Volatility – Market Sepi"
+        regime_label = "Low Volatility"
         scalp_filter  = "WAIT"
     elif is_trending and trend_direction == "UP":
         regime = "TRENDING_UP"
-        regime_label = f"🟢 Trending Up (ADX {adx:.0f}, CHOP {chop:.0f})"
+        regime_label = "Trending Up"
         scalp_filter  = "LONG_PREFERRED"
     elif is_trending and trend_direction == "DOWN":
         regime = "TRENDING_DOWN"
-        regime_label = f"🔴 Trending Down (ADX {adx:.0f}, CHOP {chop:.0f})"
+        regime_label = "Trending Down"
         scalp_filter  = "EXIT_OR_SHORT"
     elif is_choppy:
         regime = "RANGING"
-        regime_label = f"⚖️ Ranging / Choppy (CHOP {chop:.0f}, ADX {adx:.0f})"
+        regime_label = "Ranging"
         scalp_filter  = "WAIT"
     else:
         # Transisi / ambiguous
         regime = "RANGING"
-        regime_label = f"🔄 Transisi (CHOP {chop:.0f}, ADX {adx:.0f})"
+        regime_label = "Transisi"
         scalp_filter  = "WAIT"
 
     return {
@@ -1075,7 +1075,7 @@ def detect_liquidity_sweeps(
                     "close":          round(c_close, 6),
                     "time":           c_time,
                     "confirmed":      is_rejection,
-                    "label":          f"🔻 Sweep of High ({sh_price:.4f})",
+                    "label":          f"Sweep of High ({sh_price:.4f})",
                 })
 
         # --- Bullish Sweep of Lows (Wick ke bawah, rejection) ---
@@ -1091,7 +1091,7 @@ def detect_liquidity_sweeps(
                     "close":          round(c_close, 6),
                     "time":           c_time,
                     "confirmed":      is_rejection,
-                    "label":          f"🟢 Sweep of Low ({sl_price:.4f})",
+                    "label":          f"Sweep of Low ({sl_price:.4f})",
                 })
 
     # Kembalikan hanya yang terbaru (maks 3 sweep)
@@ -1179,7 +1179,7 @@ def detect_scalping_setups(
             setups.append({
                 "type":           "TREND_PULLBACK",
                 "direction":      "LONG",
-                "label":          "📈 Trend Pullback (Long)",
+                "label":          "Trend Pullback (Long)",
                 "quality":        quality,
                 "quality_score":  quality_score,
                 "entry_zone":     [round(entry_low, 6), round(entry_high, 6)],
@@ -1225,7 +1225,7 @@ def detect_scalping_setups(
             setups.append({
                 "type":           "BREAKOUT",
                 "direction":      "LONG",
-                "label":          "🚀 Breakout (Long)",
+                "label":          "Breakout (Long)",
                 "quality":        quality,
                 "quality_score":  quality_score,
                 "entry_zone":     [round(entry_low, 6), round(entry_high, 6)],
@@ -1263,7 +1263,7 @@ def detect_scalping_setups(
                 setups.append({
                     "type":           "BREAKOUT_RETEST",
                     "direction":      "LONG",
-                    "label":          "🔄 Breakout Retest (Long)",
+                    "label":          "Breakout Retest (Long)",
                     "quality":        quality,
                     "quality_score":  quality_score,
                     "entry_zone":     [round(entry_low, 6), round(entry_high, 6)],
@@ -1294,7 +1294,7 @@ def detect_scalping_setups(
         setups.append({
             "type":           "LIQUIDITY_SWEEP",
             "direction":      "LONG",
-            "label":          "⚡ Liquidity Sweep Reversal (Long)",
+            "label":          "Liquidity Sweep Reversal (Long)",
             "quality":        quality,
             "quality_score":  quality_score,
             "entry_zone":     [round(entry_low, 6), round(entry_high, 6)],
@@ -1432,19 +1432,19 @@ def calculate_signal_score(
 
     if total >= 90:
         category = "VERY_STRONG"
-        category_label = "🔥 VERY STRONG"
+        category_label = "VERY STRONG"
     elif total >= 75:
         category = "STRONG"
-        category_label = "✅ STRONG"
+        category_label = "STRONG"
     elif total >= 60:
         category = "WATCH"
-        category_label = "👀 WATCH"
+        category_label = "WATCH"
     elif total >= 40:
         category = "WEAK"
-        category_label = "⚠️ WEAK"
+        category_label = "WEAK"
     else:
         category = "NO_TRADE"
-        category_label = "🚫 NO TRADE"
+        category_label = "NO TRADE"
 
     return {
         "score":           total,
@@ -1671,7 +1671,7 @@ def run_full_p0_analysis(
             "dump_risk": False,
             "veto_active": False,
             "status": "NO_DATA",
-            "status_label": "🔵 BTC: Data tidak tersedia",
+            "status_label": "BTC: Data tidak tersedia",
             "btc_price": 0.0,
             "btc_return_5m": 0.0,
             "btc_ema20": None,
@@ -1919,15 +1919,15 @@ def advance_trade_state(
 def get_trade_state_label(state: str) -> str:
     """Kembalikan label human-readable untuk ditampilkan di UI."""
     labels = {
-        "DETECTED":          "🔍 Setup Terdeteksi",
-        "PENDING_ENTRY":     "⏳ Menunggu Entry (<0.15%)",
-        "ACTIVE":            "🟢 AKTIF – Posisi Terbuka",
-        "TP1_HIT":           "✅ TP1 Tercapai – 50% Profit",
-        "BREAKEVEN_ACTIVE":  "🔒 Breakeven Aktif – Risk-Free",
-        "TP2_HIT":           "🎯 TP2 Tercapai – Full Exit",
-        "STOPPED_BE":        "🔐 Stopped Breakeven (Risk-Free)",
-        "STOPPED_OUT":       "❌ Stop Loss Terkena",
-        "EXPIRED":           "⏰ Signal Kedaluwarsa (TTL)",
-        "INVALIDATED":       "⚠️ Struktur Invalid – Dibatalkan",
+        "DETECTED":          "Setup Terdeteksi",
+        "PENDING_ENTRY":     "Menunggu Entry (<0.15%)",
+        "ACTIVE":            "AKTIF – Posisi Terbuka",
+        "TP1_HIT":           "TP1 Tercapai – 50% Profit",
+        "BREAKEVEN_ACTIVE":  "Breakeven Aktif – Risk-Free",
+        "TP2_HIT":           "TP2 Tercapai – Full Exit",
+        "STOPPED_BE":        "Stopped Breakeven (Risk-Free)",
+        "STOPPED_OUT":       "Stop Loss Terkena",
+        "EXPIRED":           "Signal Kedaluwarsa (TTL)",
+        "INVALIDATED":       "Struktur Invalid – Dibatalkan",
     }
     return labels.get(state, state)
