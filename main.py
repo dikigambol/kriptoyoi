@@ -1,6 +1,7 @@
 import os
 import time
 import asyncio
+import logging
 from typing import Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query, HTTPException
@@ -11,6 +12,8 @@ import httpx
 
 # Load environment variables
 load_dotenv()
+
+logger = logging.getLogger("kriptoyoi")
 
 API_KEY = os.getenv("apikey_tokocrypto", "")
 BASE_REST_URL = "https://www.tokocrypto.site"
@@ -32,6 +35,20 @@ symbols_cache = {
     "last_updated": 0
 }
 
+# ---------------------------------------------------------------------------
+# BTC Pulse Cache — diperbarui background setiap 30 detik
+# Menyimpan candles BTCUSDT 5M & 1M + hasil analyze_btc_pulse() terkini
+# ---------------------------------------------------------------------------
+btc_pulse_cache: dict = {
+    "last_updated": 0,
+    "candles_5m": [],
+    "candles_1m": [],
+    "pulse": None,          # hasil analyze_btc_pulse()
+    "error": None,
+}
+BTC_PULSE_TTL = 30          # detik — refresh interval background task
+BTC_PULSE_CANDLE_LIMIT = 60 # jumlah candle yang di-fetch per timeframe
+
 def get_headers():
     headers = {
         "User-Agent": "KriptoYoi/1.0",
@@ -40,6 +57,70 @@ def get_headers():
     if API_KEY:
         headers["X-MBX-APIKEY"] = API_KEY
     return headers
+
+
+async def _fetch_btc_klines(client: httpx.AsyncClient, interval: str, limit: int) -> list:
+    """Fetch raw BTCUSDT klines dan format ke dict candle."""
+    try:
+        resp = await client.get(
+            f"{BASE_REST_URL}/api/v3/klines",
+            params={"symbol": "BTCUSDT", "interval": interval, "limit": limit},
+            headers=get_headers(),
+        )
+        if resp.status_code == 200:
+            return [
+                {
+                    "time":   int(item[0]) // 1000,
+                    "open":   float(item[1]),
+                    "high":   float(item[2]),
+                    "low":    float(item[3]),
+                    "close":  float(item[4]),
+                    "volume": float(item[5]),
+                }
+                for item in resp.json()
+            ]
+    except Exception as exc:
+        logger.warning("Gagal fetch BTC klines %s: %s", interval, exc)
+    return []
+
+
+async def refresh_btc_pulse_cache() -> None:
+    """
+    Fetch candles BTCUSDT 5M & 1M, jalankan analyze_btc_pulse(),
+    simpan hasilnya ke btc_pulse_cache.
+    """
+    from analyzer.p0_engine import analyze_btc_pulse
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            c5m, c1m = await asyncio.gather(
+                _fetch_btc_klines(client, "5m", BTC_PULSE_CANDLE_LIMIT),
+                _fetch_btc_klines(client, "1m", BTC_PULSE_CANDLE_LIMIT),
+            )
+        if c5m:
+            pulse = analyze_btc_pulse(c5m, c1m if c1m else None)
+            btc_pulse_cache.update({
+                "last_updated": time.time(),
+                "candles_5m":   c5m,
+                "candles_1m":   c1m,
+                "pulse":        pulse,
+                "error":        None,
+            })
+    except Exception as exc:
+        logger.warning("BTC pulse refresh error: %s", exc)
+        btc_pulse_cache["error"] = str(exc)
+
+
+async def _btc_pulse_background_loop() -> None:
+    """Loop background yang memperbarui BTC pulse setiap BTC_PULSE_TTL detik."""
+    while True:
+        await refresh_btc_pulse_cache()
+        await asyncio.sleep(BTC_PULSE_TTL)
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Jalankan background BTC pulse monitor saat server start."""
+    asyncio.create_task(_btc_pulse_background_loop())
 
 
 @app.get("/api/config")
@@ -146,6 +227,42 @@ async def get_ticker24hr(symbol: str = Query("BTCUSDT", description="Trading pai
     return {}
 
 
+@app.get("/api/btc-pulse")
+async def get_btc_pulse(force_refresh: bool = Query(False, description="Paksa refresh cache sekarang")):
+    """
+    Kembalikan status BTC Market Gatekeeper terkini.
+
+    Response mencakup:
+    - dump_risk / veto_active : apakah veto Long altcoin aktif
+    - status / status_label   : SAFE | CAUTION | DUMP_RISK
+    - btc_price, btc_return_5m, btc_ema20, btc_atr_ratio
+    - reasons                 : daftar alasan veto (jika aktif)
+    - cache_age_sec           : usia cache dalam detik
+    """
+    if force_refresh or not btc_pulse_cache["pulse"]:
+        await refresh_btc_pulse_cache()
+
+    pulse = btc_pulse_cache.get("pulse")
+    if not pulse:
+        # Fallback bila data belum tersedia sama sekali
+        return {
+            "dump_risk": False,
+            "veto_active": False,
+            "status": "NO_DATA",
+            "status_label": "🔵 BTC: Data belum tersedia",
+            "btc_price": 0.0,
+            "btc_return_5m": 0.0,
+            "btc_ema20": None,
+            "btc_atr_ratio": 0.0,
+            "reasons": [],
+            "btc_1m_return": 0.0,
+            "cache_age_sec": None,
+        }
+
+    age = round(time.time() - btc_pulse_cache["last_updated"], 1)
+    return {**pulse, "cache_age_sec": age}
+
+
 @app.get("/api/klines")
 async def get_klines(
     symbol: str = Query("BTCUSDT", description="Trading pair symbol"),
@@ -238,7 +355,8 @@ async def fetch_timeframe_klines(client: httpx.AsyncClient, symbol: str, interva
 @app.get("/api/analysis/p0")
 async def get_p0_analysis(
     symbol: str = Query("BTCUSDT", description="Trading pair symbol"),
-    interval: str = Query("1m", description="Active chart timeframe")
+    interval: str = Query("1m", description="Active chart timeframe"),
+    bnb_discount: bool = Query(False, description="Gunakan diskon fee BNB (fee 0.075% vs 0.10%)")
 ):
     """
     Get Stage P0 Quantitative Scalping Analysis:
@@ -273,7 +391,14 @@ async def get_p0_analysis(
             if not tf_candles or (interval not in tf_candles and "1m" not in tf_candles):
                 raise HTTPException(status_code=502, detail="Failed to fetch candlestick data for analysis")
 
-            analysis = run_full_p0_analysis(clean_symbol, tf_candles, active_interval=interval)
+            analysis = run_full_p0_analysis(
+                clean_symbol,
+                tf_candles,
+                active_interval=interval,
+                use_bnb_discount=bnb_discount,
+                btc_5m_candles=btc_pulse_cache.get("candles_5m") or None,
+                btc_1m_candles=btc_pulse_cache.get("candles_1m") or None,
+            )
 
             p0_cache[cache_key] = {
                 "cached_at": now,

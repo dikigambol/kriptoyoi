@@ -64,6 +64,8 @@
     srPriceLines: [],
     p0AnalysisData: null,
     p0PeriodicTimer: null,
+    btcPulseData: null,
+    btcPulseTimer: null,
     highPrice24h: null,
     lowPrice24h: null,
     openPrice24h: null,
@@ -97,6 +99,10 @@
     pressureText: document.getElementById('pressureText'),
     radarTpVal: document.getElementById('radarTpVal'),
     radarSlVal: document.getElementById('radarSlVal'),
+    radarNetRR: document.getElementById('radarNetRR'),
+    radarFriction: document.getElementById('radarFriction'),
+    netRRViabilityBadge: document.getElementById('netRRViabilityBadge'),
+    netRRViabilityText: document.getElementById('netRRViabilityText'),
     radarBuyZoneBadge: document.getElementById('radarBuyZoneBadge'),
     radarBuyZoneVal: document.getElementById('radarBuyZoneVal'),
     radarSellZoneBadge: document.getElementById('radarSellZoneBadge'),
@@ -104,6 +110,9 @@
     radarZoneStatusPill: document.getElementById('radarZoneStatusPill'),
     radarZoneStatusText: document.getElementById('radarZoneStatusText'),
     toggleZones: document.getElementById('toggleZones'),
+    // BTC Market Gatekeeper
+    btcGatekeeperBadge: document.getElementById('btcGatekeeperBadge'),
+    btcGatekeeperText: document.getElementById('btcGatekeeperText'),
     // P0 MTF & Structure Elements
     mtf1h: document.getElementById('mtf1h'),
     mtf15m: document.getElementById('mtf15m'),
@@ -506,7 +515,7 @@
       // CAUTION: Overbought but still holding
       else if (isStochOverbought && kAboveD) {
         el.radarSignalBadge.className = 'radar-signal-badge sell';
-        el.radarSignalText.textContent = 'Jenuh Beli ⚠️ (Siap-siap TP)';
+        el.radarSignalText.textContent = 'Jenuh Beli (Siap-siap TP)';
       }
       // Neutral / Wait
       else {
@@ -515,10 +524,11 @@
       }
     }
 
-    // 4. Kalkulasi Estimasi Target TP (+0.5%) & SL (di bawah EMA 21 atau -0.3%)
-    if (price > 0) {
-      const tpPrice = price * 1.005; // +0.5%
-      const slPrice = e21 && e21 < price ? e21 * 0.998 : price * 0.997; // -0.2% di bawah EMA 21 atau -0.3%
+    // 4. Kalkulasi Estimasi Target TP & SL — fallback sederhana jika P0 belum siap
+    // Nilai definitif (berbasis ATR + Net R:R) akan di-override oleh renderP0Analysis()
+    if (price > 0 && !state.p0AnalysisData) {
+      const tpPrice = price * 1.005; // +0.5% placeholder
+      const slPrice = e21 && e21 < price ? e21 * 0.998 : price * 0.997;
       if (el.radarTpVal) el.radarTpVal.textContent = formatPrice(tpPrice, state.symbol);
       if (el.radarSlVal) el.radarSlVal.textContent = formatPrice(slPrice, state.symbol);
     }
@@ -636,7 +646,7 @@
         lineWidth: 1.5,
         lineStyle: LightweightCharts.LineStyle.Dashed,
         axisLabelVisible: true,
-        title: '🔴 AREA JUAL',
+        title: 'AREA JUAL',
       });
 
       // Buy Area (Demand)
@@ -646,7 +656,7 @@
         lineWidth: 1.5,
         lineStyle: LightweightCharts.LineStyle.Dashed,
         axisLabelVisible: true,
-        title: '🟢 AREA BELI',
+        title: 'AREA BELI',
       });
 
       state.buyZoneLowerLine = state.candleSeries.createPriceLine({
@@ -676,21 +686,21 @@
 
     if (currentPrice <= zones.buyMax && currentPrice >= zones.buyMin) {
       el.radarZoneStatusPill.className = 'zone-status-pill in-buy';
-      el.radarZoneStatusText.textContent = '⚡ DALAM AREA BELI (DEMAND)';
+      el.radarZoneStatusText.textContent = 'DALAM AREA BELI (DEMAND)';
     } else if (currentPrice >= zones.sellMin && currentPrice <= zones.sellMax) {
       el.radarZoneStatusPill.className = 'zone-status-pill in-sell';
-      el.radarZoneStatusText.textContent = '🚀 DALAM AREA JUAL (SUPPLY)';
+      el.radarZoneStatusText.textContent = 'DALAM AREA JUAL (SUPPLY)';
     } else if (currentPrice < zones.buyMin) {
       el.radarZoneStatusPill.className = 'zone-status-pill in-buy';
-      el.radarZoneStatusText.textContent = '⚠️ DI BAWAH AREA BELI (DISCOUNT)';
+      el.radarZoneStatusText.textContent = 'DI BAWAH AREA BELI (DISCOUNT)';
     } else if (currentPrice > zones.sellMax) {
       el.radarZoneStatusPill.className = 'zone-status-pill in-sell';
-      el.radarZoneStatusText.textContent = '🔥 DI ATAS AREA JUAL (BREAKOUT)';
+      el.radarZoneStatusText.textContent = 'DI ATAS AREA JUAL (BREAKOUT)';
     } else {
       const distToBuy = (((currentPrice - zones.buyMax) / currentPrice) * 100).toFixed(2);
       const distToSell = (((zones.sellMin - currentPrice) / currentPrice) * 100).toFixed(2);
       el.radarZoneStatusPill.className = 'zone-status-pill neutral';
-      el.radarZoneStatusText.textContent = `⚖️ -${distToBuy}% ke Beli | +${distToSell}% ke Jual`;
+      el.radarZoneStatusText.textContent = `-${distToBuy}% ke Beli | +${distToSell}% ke Jual`;
     }
   }
 
@@ -737,7 +747,7 @@
         lineWidth: 1.5,
         lineStyle: LightweightCharts.LineStyle.Dashed,
         axisLabelVisible: true,
-        title: `🟢 SUP (${sup.touches}x, -${sup.dist_pct}%)`,
+        title: `SUP (${sup.touches}x, -${sup.dist_pct}%)`,
       });
       state.srPriceLines.push(supLine);
     }
@@ -750,7 +760,7 @@
         lineWidth: 1.5,
         lineStyle: LightweightCharts.LineStyle.Dashed,
         axisLabelVisible: true,
-        title: `🔴 RES (${res.touches}x, +${res.dist_pct}%)`,
+        title: `RES (${res.touches}x, +${res.dist_pct}%)`,
       });
       state.srPriceLines.push(resLine);
     }
@@ -768,6 +778,80 @@
       renderP0Analysis(data);
     } catch (err) {
       console.warn('Gagal memuat analisis P0:', err);
+    }
+  }
+
+  // --- BTC Market Gatekeeper Polling ---
+  async function fetchBtcPulse() {
+    try {
+      const resp = await fetch('/api/btc-pulse');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      state.btcPulseData = data;
+      renderBtcGatekeeper(data);
+    } catch (err) {
+      console.warn('Gagal memuat BTC pulse:', err);
+    }
+  }
+
+  function renderBtcGatekeeper(pulse) {
+    if (!pulse || !el.btcGatekeeperBadge || !el.btcGatekeeperText) return;
+
+    const status = pulse.status || 'NO_DATA';
+    const price = pulse.btc_price > 0 ? `$${Number(pulse.btc_price).toLocaleString('en-US', { maximumFractionDigits: 0 })}` : '--';
+    const ret = pulse.btc_return_5m !== undefined ? `${pulse.btc_return_5m > 0 ? '+' : ''}${Number(pulse.btc_return_5m).toFixed(2)}%` : '';
+
+    // Pilih kelas CSS berdasarkan status
+    let badgeClass = 'btc-gatekeeper-badge';
+    let labelText = '';
+
+    if (status === 'DUMP_RISK') {
+      badgeClass += ' dump-risk';
+      labelText = `BTC DUMP RISK ${price} (${ret})`;
+    } else if (status === 'CAUTION') {
+      badgeClass += ' caution';
+      labelText = `BTC Waspada ${price} (${ret})`;
+    } else if (status === 'SAFE') {
+      badgeClass += ' safe';
+      labelText = `BTC ${price} (${ret})`;
+    } else {
+      badgeClass += ' no-data';
+      labelText = `₿ BTC --`;
+    }
+
+    el.btcGatekeeperBadge.className = badgeClass;
+    el.btcGatekeeperText.textContent = labelText;
+
+    // Tooltip detail
+    const tooltipLines = [
+      `BTC Market Gatekeeper`,
+      `Status: ${status}`,
+      `Harga: ${price}`,
+      `Return 5M: ${ret}`,
+      `EMA20: ${pulse.btc_ema20 ? '$' + Number(pulse.btc_ema20).toLocaleString('en-US', { maximumFractionDigits: 0 }) : '--'}`,
+      `ATR Ratio: ${pulse.btc_atr_ratio}x`,
+    ];
+    if (pulse.reasons && pulse.reasons.length > 0) {
+      tooltipLines.push('', 'Alasan Veto:');
+      pulse.reasons.forEach(r => tooltipLines.push('• ' + r));
+    }
+    if (pulse.cache_age_sec !== null && pulse.cache_age_sec !== undefined) {
+      tooltipLines.push('', `Cache: ${pulse.cache_age_sec}s lalu`);
+    }
+    el.btcGatekeeperBadge.title = tooltipLines.join('\n');
+
+    // Jika veto aktif — tampilkan overlay banner di radar
+    applyBtcVetoToRadar(pulse);
+  }
+
+  function applyBtcVetoToRadar(pulse) {
+    if (!el.radarSignalBadge || !el.radarSignalText) return;
+    if (!pulse || !pulse.veto_active) return;
+
+    // Hanya override jika sinyal saat ini adalah BUY — tidak suppress warning BEARISH
+    if (el.radarSignalBadge.classList.contains('buy')) {
+      el.radarSignalBadge.className = 'radar-signal-badge veto';
+      el.radarSignalText.textContent = `WAIT – BTC DUMP RISK (Long DIBLOKIR)`;
     }
   }
 
@@ -806,12 +890,12 @@
       }
       if (el.bosChochBadge) {
         if (data.structure.last_choch) {
-          el.bosChochBadge.textContent = '⚡ CHoCH Reversal';
+          el.bosChochBadge.textContent = 'CHoCH Reversal';
           el.bosChochBadge.title = data.structure.last_choch.label || 'Change of Character';
           el.bosChochBadge.style.display = 'inline-block';
         } else if (data.structure.last_bos) {
           const isBull = data.structure.last_bos.type === 'BULLISH_BOS';
-          el.bosChochBadge.textContent = isBull ? '🚀 Bull BOS' : '🔻 Bear BOS';
+          el.bosChochBadge.textContent = isBull ? 'Bull BOS' : '🔻Bear BOS';
           el.bosChochBadge.title = data.structure.last_bos.label || 'Break of Structure';
           el.bosChochBadge.style.display = 'inline-block';
         } else {
@@ -850,18 +934,87 @@
     // 5. Radar Signal Badge override based on P0 Confluence
     if (data.mtf && el.radarSignalBadge && el.radarSignalText) {
       const act = data.mtf.actionable_bias;
-      if (act === 'LONG_STRONG') {
+      if (act === 'WAIT_BTC_DUMP_RISK') {
+        // BTC veto aktif — override semua sinyal Long
+        el.radarSignalBadge.className = 'radar-signal-badge veto';
+        const origBias = data.mtf.original_bias || '';
+        el.radarSignalText.textContent = `WAIT – BTC DUMP RISK (${origBias || 'Long DIBLOKIR'})`;
+      } else if (act === 'LONG_STRONG') {
         el.radarSignalBadge.className = 'radar-signal-badge buy';
-        el.radarSignalText.textContent = `🔥 STRONG LONG (MTF ${data.mtf.score_ratio})`;
+        el.radarSignalText.textContent = `STRONG LONG (MTF ${data.mtf.score_ratio})`;
       } else if (act === 'LONG_ON_PULLBACK') {
         el.radarSignalBadge.className = 'radar-signal-badge buy';
-        el.radarSignalText.textContent = `🟢 PULLBACK BUY DIP (MTF ${data.mtf.score_ratio})`;
+        el.radarSignalText.textContent = `PULLBACK BUY DIP (MTF ${data.mtf.score_ratio})`;
       } else if (act === 'SHORT_OR_EXIT' || act === 'SHORT_OR_EXIT_ON_PUMP') {
         el.radarSignalBadge.className = 'radar-signal-badge sell';
-        el.radarSignalText.textContent = `⚠️ BEARISH CAUTION (MTF ${data.mtf.score_ratio})`;
+        el.radarSignalText.textContent = `BEARISH CAUTION (MTF ${data.mtf.score_ratio})`;
       } else {
         el.radarSignalBadge.className = 'radar-signal-badge neutral';
-        el.radarSignalText.textContent = `⚖️ WAIT / CHOPPY (${data.mtf.confluence_summary})`;
+        el.radarSignalText.textContent = `WAIT / CHOPPY (${data.mtf.confluence_summary})`;
+      }
+    }
+
+    // 6. Friction Cost Engine + Net R:R (Roadmap Addendum §2)
+    if (data.friction && data.friction.tp1) {
+      const tp1 = data.friction.tp1;
+      const tp2 = data.friction.tp2;
+      const fc = data.friction.cost_detail;
+
+      // Update TP1, SL values (Net — setelah friction)
+      if (el.radarTpVal) el.radarTpVal.textContent = formatPrice(tp1.tp, state.symbol);
+      if (el.radarSlVal) el.radarSlVal.textContent = formatPrice(tp1.sl, state.symbol);
+
+      // Net R:R display
+      if (el.radarNetRR) {
+        el.radarNetRR.textContent = tp1.net_rr > 0 ? `1 : ${tp1.net_rr.toFixed(2)}` : '--';
+        el.radarNetRR.style.color = tp1.is_fee_viable
+          ? (tp1.net_rr >= 2.0 ? 'var(--bull-color)' : '#f59e0b')
+          : 'var(--bear-color)';
+      }
+
+      // Friction round-trip cost
+      if (el.radarFriction) {
+        el.radarFriction.textContent = `${fc.cost_roundtrip_pct}% RT`;
+        el.radarFriction.title = [
+          `Fee: ${fc.fee_rate_pct}%`,
+          `PPh: ${fc.pph_pct}%`,
+          `PPN: ${fc.ppn_pct}%`,
+          `Slippage: ${fc.slippage_pct}%`,
+          `Total per sisi: ${fc.cost_one_side_pct}%`,
+          `Round-trip: ${fc.cost_roundtrip_pct}%`,
+        ].join(' | ');
+      }
+
+      // Viability badge
+      if (el.netRRViabilityBadge && el.netRRViabilityText) {
+        el.netRRViabilityBadge.style.display = 'flex';
+        el.netRRViabilityText.textContent = tp1.viability_label;
+
+        if (!tp1.is_fee_viable) {
+          el.netRRViabilityBadge.className = 'net-rr-viability-badge fee-unviable';
+        } else if (tp1.net_rr >= 2.0) {
+          el.netRRViabilityBadge.className = 'net-rr-viability-badge viable-strong';
+        } else {
+          el.netRRViabilityBadge.className = 'net-rr-viability-badge viable';
+        }
+      }
+
+      // Override radar signal jika FEE_UNVIABLE — bahkan jika MTF bullish
+      if (!tp1.is_fee_viable && el.radarSignalBadge && el.radarSignalText) {
+        // Hanya override jika setup sebelumnya BUY — tidak suppress BEARISH warning
+        if (el.radarSignalBadge.classList.contains('buy')) {
+          el.radarSignalBadge.className = 'radar-signal-badge neutral';
+          el.radarSignalText.textContent = `NO TRADE – ${tp1.viability_status.replace(/_/g, ' ')}`;
+        }
+      }
+    }
+
+    // 7. BTC Gatekeeper (dari data P0 langsung — sync dengan analisis)
+    if (data.btc_gatekeeper) {
+      renderBtcGatekeeper(data.btc_gatekeeper);
+      // Update state pulse juga agar polling berikutnya punya baseline
+      if (data.btc_gatekeeper.status !== 'NO_DATA') {
+        state.btcPulseData = data.btc_gatekeeper;
       }
     }
   }
@@ -2603,6 +2756,14 @@
     state.p0PeriodicTimer = setInterval(() => {
       fetchP0Analysis(state.symbol, state.interval);
     }, 12000);
+
+    // BTC Market Gatekeeper — polling independen setiap 30 detik
+    // (lebih jarang karena BTC pulse berubah lambat vs sinyal per-koin)
+    fetchBtcPulse(); // fetch segera saat load
+    if (state.btcPulseTimer) clearInterval(state.btcPulseTimer);
+    state.btcPulseTimer = setInterval(() => {
+      fetchBtcPulse();
+    }, 30000);
   }
 
   // Start on DOM ready

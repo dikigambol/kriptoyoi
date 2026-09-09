@@ -9,10 +9,161 @@ Implements:
 4. Volume Engine (RVOL 20-SMA, Volume Spike Detection)
 5. Momentum Engine (EMA 9, 21, 50 Alignment & Momentum Slopes)
 6. Multi-Timeframe (MTF) Confluence Engine (1H, 15M, 5M, 1M Matrix)
+7. Friction Cost Engine (Tokocrypto Fee + PPh + PPN + Slippage, Net R:R Validation)
+8. BTC Market Gatekeeper (Korelasi Makro – veto sinyal Long altcoin saat BTC dump)
 """
 
 from typing import List, Dict, Any, Optional, Tuple
 import math
+
+
+# ---------------------------------------------------------------------------
+# Friction Cost Engine (Bagian 2 – Roadmap Addendum)
+# Biaya transaksi Tokocrypto Spot + pajak kripto Indonesia (PMK 68/2022)
+# ---------------------------------------------------------------------------
+
+# Komponen biaya per sisi (buy atau sell), dalam desimal (bukan persen)
+_FEE_RATE       = 0.0010   # Trading fee 0.10% (tanpa diskon BNB)
+_PPH_RATE       = 0.0010   # PPh Final 0.10%
+_PPN_RATE       = 0.0011   # PPN 0.11%
+_SLIPPAGE_MID   = 0.00075  # Slippage estimasi tengah 0.075% per sisi
+
+# Biaya per sisi = fee + PPh + PPN + slippage
+_COST_ONE_SIDE  = _FEE_RATE + _PPH_RATE + _PPN_RATE + _SLIPPAGE_MID   # ≈ 0.3575%
+# Round-trip (buka + tutup posisi)
+_COST_ROUNDTRIP = _COST_ONE_SIDE * 2                                    # ≈ 0.715% → masuk range 0.35-0.45% tanpa slippage, ~0.715% dgn slippage
+
+# Aturan filter Net R:R
+_MIN_NET_RR     = 1.2   # Jika Net R:R < 1.2 → NO TRADE (FEE_UNVIABLE)
+_MIN_TP_FRICTION_MULT = 2.5  # TP1 minimal ≥ 2.5× total friction round-trip
+
+
+def calculate_friction_cost(entry_price: float, use_bnb_discount: bool = False) -> Dict[str, Any]:
+    """
+    Hitung biaya transaksi round-trip Tokocrypto Spot (PMK 68/2022).
+
+    Komponen per sisi:
+    - Trading Fee : 0.10% (atau 0.075% dengan diskon BNB)
+    - PPh Final   : 0.10%
+    - PPN         : 0.11%
+    - Slippage    : ~0.075% (estimasi tengah untuk koin likuiditas menengah)
+
+    Args:
+        entry_price: Harga entry posisi (dalam quote currency)
+        use_bnb_discount: True jika menggunakan diskon BNB (fee jadi 0.075%)
+
+    Returns:
+        Dict berisi biaya absolut dan persentase untuk setiap komponen.
+    """
+    fee_rate = 0.00075 if use_bnb_discount else _FEE_RATE
+
+    # Biaya per sisi dalam persen (desimal)
+    cost_one_side = fee_rate + _PPH_RATE + _PPN_RATE + _SLIPPAGE_MID
+    cost_roundtrip = cost_one_side * 2
+
+    # Nilai absolut berdasarkan entry price
+    friction_abs = entry_price * cost_roundtrip
+    friction_one_abs = entry_price * cost_one_side
+
+    return {
+        "fee_rate_pct": round(fee_rate * 100, 3),
+        "pph_pct": round(_PPH_RATE * 100, 3),
+        "ppn_pct": round(_PPN_RATE * 100, 3),
+        "slippage_pct": round(_SLIPPAGE_MID * 100, 3),
+        "cost_one_side_pct": round(cost_one_side * 100, 4),
+        "cost_roundtrip_pct": round(cost_roundtrip * 100, 4),
+        "friction_abs": round(friction_abs, 8),
+        "friction_one_abs": round(friction_one_abs, 8),
+        "use_bnb_discount": use_bnb_discount,
+    }
+
+
+def calculate_net_rr(
+    entry_price: float,
+    tp_price: float,
+    sl_price: float,
+    use_bnb_discount: bool = False
+) -> Dict[str, Any]:
+    """
+    Hitung Net Risk-to-Reward (Net R:R) setelah dikurangi friction cost.
+
+    Formula (Roadmap Addendum §2.2):
+        Net Profit Target = (TP Price - Entry Price) - Total Friction (abs)
+        Net Stop Loss     = (Entry Price - SL Price) + Total Friction (abs)
+        Net R:R           = Net Profit Target / Net Stop Loss
+
+    Filter:
+        - Net R:R < 1.2             → NO TRADE (FEE_UNVIABLE)
+        - TP distance < 2.5× friction → NO TRADE (FEE_UNVIABLE)
+
+    Args:
+        entry_price: Harga entry
+        tp_price: Target harga take profit
+        sl_price: Harga stop loss
+        use_bnb_discount: Gunakan diskon BNB untuk fee
+
+    Returns:
+        Dict berisi semua nilai net R:R dan status viabilitas.
+    """
+    friction = calculate_friction_cost(entry_price, use_bnb_discount)
+    friction_abs = friction["friction_abs"]
+    friction_rt_pct = friction["cost_roundtrip_pct"]
+
+    gross_profit = tp_price - entry_price
+    gross_loss = entry_price - sl_price
+
+    net_profit = gross_profit - friction_abs
+    net_loss = gross_loss + friction_abs
+
+    # Jaga dari division-by-zero
+    net_rr = round(net_profit / net_loss, 3) if net_loss > 0 else 0.0
+
+    # TP distance sebagai kelipatan friction round-trip
+    tp_dist_pct = (gross_profit / entry_price) * 100.0 if entry_price > 0 else 0.0
+    tp_friction_mult = tp_dist_pct / friction_rt_pct if friction_rt_pct > 0 else 0.0
+
+    # Viabilitas setup — toleransi kecil untuk floating point
+    is_tp_dist_ok = tp_friction_mult >= (_MIN_TP_FRICTION_MULT - 0.01)
+    is_fee_viable = (net_rr >= _MIN_NET_RR) and is_tp_dist_ok
+
+    if net_profit <= 0:
+        viability_status = "NO_TRADE_NEGATIVE_NET_PROFIT"
+        viability_label = "❌ NO TRADE – TP Tertutup Fee"
+    elif not is_fee_viable:
+        if not is_tp_dist_ok:
+            viability_status = "NO_TRADE_TP_TOO_CLOSE"
+            viability_label = f"❌ NO TRADE – TP Terlalu Dekat ({tp_friction_mult:.1f}× friction, min {_MIN_TP_FRICTION_MULT}×)"
+        else:
+            viability_status = "NO_TRADE_FEE_UNVIABLE"
+            viability_label = f"⚠️ FEE UNVIABLE – Net R:R {net_rr:.2f} (min {_MIN_NET_RR})"
+    elif net_rr >= 2.0:
+        viability_status = "VIABLE_STRONG"
+        viability_label = f"✅ VIABLE – Net R:R {net_rr:.2f} (Kuat)"
+    else:
+        viability_status = "VIABLE"
+        viability_label = f"✅ VIABLE – Net R:R {net_rr:.2f}"
+
+    return {
+        "entry": round(entry_price, 8),
+        "tp": round(tp_price, 8),
+        "sl": round(sl_price, 8),
+        "gross_profit": round(gross_profit, 8),
+        "gross_loss": round(gross_loss, 8),
+        "gross_rr": round(gross_profit / gross_loss, 3) if gross_loss > 0 else 0.0,
+        "friction_abs": friction_abs,
+        "friction_rt_pct": friction_rt_pct,
+        "net_profit": round(net_profit, 8),
+        "net_loss": round(net_loss, 8),
+        "net_rr": net_rr,
+        "tp_dist_pct": round(tp_dist_pct, 4),
+        "tp_friction_mult": round(tp_friction_mult, 2),
+        "min_tp_friction_mult": _MIN_TP_FRICTION_MULT,
+        "min_net_rr": _MIN_NET_RR,
+        "is_fee_viable": is_fee_viable,
+        "viability_status": viability_status,
+        "viability_label": viability_label,
+        "friction_detail": friction,
+    }
 
 
 def calculate_ema(series: List[float], period: int) -> List[Optional[float]]:
@@ -518,10 +669,157 @@ def analyze_mtf_confluence(
     }
 
 
+
+
+# ---------------------------------------------------------------------------
+# BTC Market Gatekeeper (Bagian 5 – Roadmap Addendum)
+# Mencegah sinyal Long altcoin palsu saat Bitcoin mengalami flash dump.
+# ---------------------------------------------------------------------------
+
+# Threshold veto kondisi BTC Dump Risk
+_BTC_EMA_PERIOD     = 20       # EMA 20 untuk BTC 5M
+_BTC_RETURN_VETO    = -0.006   # 5M Return < -0.6%  → dump risk
+_BTC_ATR_RATIO_VETO = 2.5      # ATR Ratio > 2.5 dengan arah bearish impulsif
+
+
+def analyze_btc_pulse(
+    btc_5m_candles: List[Dict[str, Any]],
+    btc_1m_candles: Optional[List[Dict[str, Any]]] = None
+) -> Dict[str, Any]:
+    """
+    Evaluasi kondisi makro Bitcoin untuk menentukan apakah aman membuka Long altcoin.
+
+    Kondisi BTC Dump Risk (Veto) terpenuhi bila SALAH SATU dari:
+    1. BTC 5M Close < BTC EMA 20  DAN  BTC 5M Return < -0.6% dalam 1-2 candle terakhir
+    2. BTC ATR Ratio > 2.5 dengan arah bearish impulsif (close < open secara konsisten)
+
+    Args:
+        btc_5m_candles: Klines BTCUSDT interval 5M (minimal 30 bar)
+        btc_1m_candles: Klines BTCUSDT interval 1M (opsional, untuk konfirmasi intrabar)
+
+    Returns:
+        Dict berisi status dump risk, alasan, dan metrik BTC terkini.
+    """
+    if not btc_5m_candles or len(btc_5m_candles) < 22:
+        return {
+            "dump_risk": False,
+            "veto_active": False,
+            "status": "INSUFFICIENT_DATA",
+            "status_label": "⏳ Data BTC tidak cukup",
+            "btc_price": 0.0,
+            "btc_return_5m": 0.0,
+            "btc_ema20": None,
+            "btc_atr_ratio": 0.0,
+            "reasons": [],
+        }
+
+    # --- Hitung EMA 20 dari close 5M ---
+    closes_5m = [float(c["close"]) for c in btc_5m_candles]
+    ema20_series = calculate_ema(closes_5m, _BTC_EMA_PERIOD)
+
+    btc_close = closes_5m[-1]
+    btc_ema20 = ema20_series[-1]
+
+    # --- Hitung return 5M untuk 2 candle terakhir ---
+    # Return candle ke-1 (paling baru)
+    prev_close_1 = closes_5m[-2] if len(closes_5m) >= 2 else btc_close
+    btc_return_c1 = (btc_close - prev_close_1) / prev_close_1 if prev_close_1 > 0 else 0.0
+
+    # Return candle ke-2
+    prev_close_2 = closes_5m[-3] if len(closes_5m) >= 3 else prev_close_1
+    btc_return_c2 = (prev_close_1 - prev_close_2) / prev_close_2 if prev_close_2 > 0 else 0.0
+
+    # Pakai return lebih negatif (worst of last 2 candles)
+    btc_return_5m = min(btc_return_c1, btc_return_c2)
+
+    # --- Hitung ATR 5M dan rasionya ---
+    atr_result = calculate_atr(btc_5m_candles, period=14)
+    btc_atr_ratio = atr_result.get("ratio", 1.0)
+
+    # Arah bearish impulsif: 2 dari 3 candle terakhir close < open
+    recent_3 = btc_5m_candles[-3:]
+    bearish_bars = sum(1 for c in recent_3 if float(c["close"]) < float(c["open"]))
+    is_bearish_impulsive = bearish_bars >= 2
+
+    # --- Konfirmasi 1M jika tersedia ---
+    btc_1m_below_ema = False
+    btc_1m_return = 0.0
+    if btc_1m_candles and len(btc_1m_candles) >= 22:
+        closes_1m = [float(c["close"]) for c in btc_1m_candles]
+        ema20_1m = calculate_ema(closes_1m, _BTC_EMA_PERIOD)
+        btc_1m_close = closes_1m[-1]
+        btc_1m_ema20 = ema20_1m[-1]
+        prev_1m = closes_1m[-2] if len(closes_1m) >= 2 else btc_1m_close
+        btc_1m_return = (btc_1m_close - prev_1m) / prev_1m if prev_1m > 0 else 0.0
+        btc_1m_below_ema = (btc_1m_ema20 is not None) and (btc_1m_close < btc_1m_ema20)
+
+    # --- Evaluasi kondisi veto ---
+    reasons: List[str] = []
+    veto_active = False
+
+    # Kondisi 1: 5M Close < EMA20 + Return < -0.6%
+    cond1_ema = (btc_ema20 is not None) and (btc_close < btc_ema20)
+    cond1_return = btc_return_5m < _BTC_RETURN_VETO
+    if cond1_ema and cond1_return:
+        veto_active = True
+        reasons.append(
+            f"BTC 5M Close ({btc_close:,.2f}) < EMA20 ({btc_ema20:,.2f}) "
+            f"dan return {btc_return_5m*100:.2f}% < {_BTC_RETURN_VETO*100:.1f}%"
+        )
+
+    # Kondisi 2: ATR Ratio > 2.5 + bearish impulsif
+    if btc_atr_ratio > _BTC_ATR_RATIO_VETO and is_bearish_impulsive:
+        veto_active = True
+        reasons.append(
+            f"BTC ATR Ratio {btc_atr_ratio:.2f}x (> {_BTC_ATR_RATIO_VETO}x) "
+            f"dengan {bearish_bars}/3 candle bearish impulsif"
+        )
+
+    # Kondisi 3 (konfirmasi tambahan dari 1M): jika veto sudah aktif dan 1M juga di bawah EMA
+    if veto_active and btc_1m_below_ema and btc_1m_return < -0.003:
+        reasons.append(
+            f"Konfirmasi 1M: close di bawah EMA20, return {btc_1m_return*100:.2f}%"
+        )
+
+    # Tetapkan status label
+    if veto_active:
+        status = "DUMP_RISK"
+        status_label = "🚨 BTC DUMP RISK – Long Altcoin di-VETO"
+    elif cond1_ema and not cond1_return:
+        # Di bawah EMA tapi belum speed yang cukup → warning ringan
+        status = "CAUTION"
+        status_label = "⚠️ BTC di Bawah EMA20 – Waspadai"
+    elif btc_return_5m < -0.003:
+        # Koreksi sedang tapi belum trigger veto
+        status = "CAUTION"
+        status_label = f"⚠️ BTC Koreksi ({btc_return_5m*100:.2f}%) – Hati-hati"
+    else:
+        status = "SAFE"
+        status_label = "✅ BTC Stabil – Long Altcoin Diizinkan"
+
+    return {
+        "dump_risk": veto_active,
+        "veto_active": veto_active,
+        "status": status,
+        "status_label": status_label,
+        "btc_price": round(btc_close, 2),
+        "btc_return_5m": round(btc_return_5m * 100, 3),   # dalam persen
+        "btc_ema20": round(btc_ema20, 2) if btc_ema20 else None,
+        "btc_atr_ratio": round(btc_atr_ratio, 2),
+        "btc_above_ema20": not cond1_ema,
+        "is_bearish_impulsive": is_bearish_impulsive,
+        "reasons": reasons,
+        "btc_1m_return": round(btc_1m_return * 100, 3),
+    }
+
+
 def run_full_p0_analysis(
     symbol: str,
     tf_candles: Dict[str, List[Dict[str, Any]]],
-    active_interval: str = "1m"
+    active_interval: str = "1m",
+    use_bnb_discount: bool = False,
+    btc_5m_candles: Optional[List[Dict[str, Any]]] = None,
+    btc_1m_candles: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """
     Run complete P0 Analysis pipeline combining all engines:
@@ -531,6 +829,8 @@ def run_full_p0_analysis(
     - Volatility (ATR-14)
     - Volume (RVOL-20)
     - Momentum (EMA 9, 21, 50)
+    - Friction Cost Engine + Net R:R Validation (Roadmap Addendum §2)
+    - BTC Market Gatekeeper — veto Long altcoin saat dump risk (Roadmap Addendum §5)
     """
     # Active candles for primary chart timeframe
     candles = tf_candles.get(active_interval) or tf_candles.get("1m", [])
@@ -558,6 +858,95 @@ def run_full_p0_analysis(
     # 6. MTF Confluence
     mtf = analyze_mtf_confluence(tf_candles)
 
+    # 7. Friction Cost Engine + Net R:R Calculation (Roadmap Addendum §2)
+    #
+    # Strategi penetapan TP/SL berbasis ATR dan S/R terdekat:
+    # - TP1: Resistance terdekat ATAU Entry + 2.0 × ATR (mana yang lebih dekat)
+    # - SL : Support terdekat ATAU Entry - 1.5 × ATR (mana yang lebih dekat ke entry)
+    # - TP2: Entry + 3.5 × ATR (target lanjutan jika TP1 tercapai)
+    #
+    # ATR digunakan sebagai basis agar TP/SL proporsional terhadap volatilitas aktual.
+
+    friction = calculate_friction_cost(current_price, use_bnb_discount)
+    friction_rt_pct = friction["cost_roundtrip_pct"] / 100.0  # konversi ke desimal
+
+    # TP1: resistance terdekat atau fallback ke 2.0× ATR
+    nearest_res_price = sr["nearest_resistance"]["price"] if sr.get("nearest_resistance") else None
+    tp1_atr = current_price + (2.0 * atr)
+    if nearest_res_price and nearest_res_price > current_price:
+        tp1_price = min(nearest_res_price, tp1_atr)
+    else:
+        tp1_price = tp1_atr
+
+    # Pastikan TP1 memenuhi persyaratan minimum: ≥ 2.5× friction round-trip
+    min_tp_dist = current_price * friction_rt_pct * _MIN_TP_FRICTION_MULT
+    if (tp1_price - current_price) < min_tp_dist:
+        tp1_price = current_price + min_tp_dist
+
+    # TP2: kelipatan 3.5× ATR atau resistance berikutnya
+    tp2_price = current_price + (3.5 * atr)
+    key_res = sr.get("key_resistances", [])
+    if len(key_res) >= 2:
+        tp2_price = max(tp2_price, key_res[1]["price"])
+
+    # SL: support terdekat atau fallback ke 1.5× ATR
+    nearest_sup_price = sr["nearest_support"]["price"] if sr.get("nearest_support") else None
+    sl_atr = current_price - (1.5 * atr)
+    if nearest_sup_price and nearest_sup_price < current_price:
+        sl_price = max(nearest_sup_price, sl_atr)
+    else:
+        sl_price = sl_atr
+
+    # Net R:R untuk TP1 (setup scalping utama)
+    net_rr_tp1 = calculate_net_rr(current_price, tp1_price, sl_price, use_bnb_discount)
+
+    # Net R:R untuk TP2 (target lanjutan)
+    net_rr_tp2 = calculate_net_rr(current_price, tp2_price, sl_price, use_bnb_discount)
+
+    # 8. BTC Market Gatekeeper (Roadmap Addendum §5)
+    # Jika simbol adalah BTCUSDT sendiri, gunakan candles aktif untuk pulse check
+    # (tidak perlu data eksternal — BTC sedang dianalisis langsung).
+    # Jika altcoin: gunakan btc_5m_candles & btc_1m_candles yang di-pass dari luar.
+    is_btc_pair = symbol.upper() in ("BTCUSDT", "BTCBIDR", "BTCUSDC")
+
+    if is_btc_pair:
+        # Analisis BTC pair itu sendiri — pakai candles aktif sebagai 5M proxy
+        btc_pulse = analyze_btc_pulse(
+            btc_5m_candles=tf_candles.get("5m", candles),
+            btc_1m_candles=tf_candles.get("1m"),
+        )
+    elif btc_5m_candles:
+        btc_pulse = analyze_btc_pulse(
+            btc_5m_candles=btc_5m_candles,
+            btc_1m_candles=btc_1m_candles,
+        )
+    else:
+        # Tidak ada data BTC — kembalikan status aman agar tidak memblokir sinyal
+        btc_pulse = {
+            "dump_risk": False,
+            "veto_active": False,
+            "status": "NO_DATA",
+            "status_label": "🔵 BTC: Data tidak tersedia",
+            "btc_price": 0.0,
+            "btc_return_5m": 0.0,
+            "btc_ema20": None,
+            "btc_atr_ratio": 0.0,
+            "reasons": [],
+            "btc_1m_return": 0.0,
+        }
+
+    # Terapkan veto pada actionable_bias MTF jika BTC dump risk aktif
+    # dan simbol bukan BTC sendiri
+    if btc_pulse["veto_active"] and not is_btc_pair:
+        original_bias = mtf.get("actionable_bias", "")
+        if original_bias in ("LONG_STRONG", "LONG_ON_PULLBACK"):
+            mtf = {**mtf,
+                "actionable_bias": "WAIT_BTC_DUMP_RISK",
+                "confluence_summary": mtf.get("confluence_summary", "") + " [VETO: BTC DUMP RISK]",
+                "btc_veto_applied": True,
+                "original_bias": original_bias,
+            }
+
     return {
         "symbol": symbol.upper(),
         "interval": active_interval,
@@ -568,5 +957,11 @@ def run_full_p0_analysis(
         "structure": structure,
         "momentum": momentum,
         "support_resistance": sr,
-        "mtf": mtf
+        "mtf": mtf,
+        "friction": {
+            "cost_detail": friction,
+            "tp1": net_rr_tp1,
+            "tp2": net_rr_tp2,
+        },
+        "btc_gatekeeper": btc_pulse,
     }

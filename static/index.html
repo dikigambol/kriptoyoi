@@ -263,17 +263,33 @@
         <div class="zone-status-pill neutral" id="radarZoneStatusPill">
           <span id="radarZoneStatusText">Di Antara S/R</span>
         </div>
+        <!-- BTC Market Gatekeeper Badge -->
+        <div class="btc-gatekeeper-badge safe" id="btcGatekeeperBadge" title="BTC Market Gatekeeper – Proteksi Makro">
+          <span class="btc-gk-icon">₿</span>
+          <span id="btcGatekeeperText">BTC: Memuat...</span>
+        </div>
       </div>
 
       <!-- Target Estimasi TP & SL -->
       <div class="radar-targets-group">
         <div class="target-item target-tp">
-          <span class="target-label">TP (+0.5%):</span>
+          <span class="target-label">TP1 (Net):</span>
           <span class="target-val" id="radarTpVal">--</span>
         </div>
         <div class="target-item target-sl">
-          <span class="target-label">SL (-0.3%):</span>
+          <span class="target-label">SL (Net):</span>
           <span class="target-val" id="radarSlVal">--</span>
+        </div>
+        <div class="target-item target-rr">
+          <span class="target-label">Net R:R:</span>
+          <span class="target-val" id="radarNetRR">--</span>
+        </div>
+        <div class="target-item target-friction">
+          <span class="target-label">Friction:</span>
+          <span class="target-val" id="radarFriction">--</span>
+        </div>
+        <div class="net-rr-viability-badge" id="netRRViabilityBadge" style="display:none;">
+          <span id="netRRViabilityText">--</span>
         </div>
       </div>
     </section>

@@ -1067,7 +1067,8 @@ html, body {
 .radar-targets-group {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .target-item {
@@ -1091,9 +1092,127 @@ html, body {
   color: var(--bear-color);
 }
 
+.target-rr {
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  color: var(--accent-cyan);
+  font-weight: 700;
+}
+
+.target-friction {
+  background: rgba(100, 116, 139, 0.12);
+  border: 1px solid rgba(100, 116, 139, 0.25);
+  color: var(--text-muted);
+}
+
+.target-label {
+  font-size: 0.7rem;
+  opacity: 0.75;
+  white-space: nowrap;
+}
+
 .target-val {
   font-weight: 700;
   color: #fff;
+}
+
+/* Net R:R Viability Badge */
+.net-rr-viability-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 5px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.net-rr-viability-badge.viable-strong {
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.45);
+  color: var(--bull-color);
+}
+
+.net-rr-viability-badge.viable {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: var(--accent-amber);
+}
+
+.net-rr-viability-badge.fee-unviable {
+  background: rgba(244, 63, 94, 0.12);
+  border: 1px solid rgba(244, 63, 94, 0.4);
+  color: var(--bear-color);
+  animation: pulse-warn 2s ease-in-out infinite;
+}
+
+@keyframes pulse-warn {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.65; }
+}
+
+/* ================= BTC MARKET GATEKEEPER BADGE ================= */
+.btc-gatekeeper-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 5px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  cursor: default;
+  transition: background 0.3s, border-color 0.3s;
+}
+
+.btc-gk-icon {
+  font-size: 0.75rem;
+  opacity: 0.9;
+}
+
+/* Status: SAFE */
+.btc-gatekeeper-badge.safe {
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: #34d399;
+}
+
+/* Status: CAUTION */
+.btc-gatekeeper-badge.caution {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: var(--accent-amber);
+}
+
+/* Status: DUMP_RISK — merah berkedip */
+.btc-gatekeeper-badge.dump-risk {
+  background: rgba(244, 63, 94, 0.15);
+  border: 1px solid rgba(244, 63, 94, 0.55);
+  color: #fb7185;
+  animation: btc-dump-pulse 1.2s ease-in-out infinite;
+}
+
+/* Status: NO_DATA */
+.btc-gatekeeper-badge.no-data {
+  background: rgba(100, 116, 139, 0.1);
+  border: 1px solid rgba(100, 116, 139, 0.25);
+  color: var(--text-muted);
+}
+
+@keyframes btc-dump-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(244, 63, 94, 0); }
+  50%       { opacity: 0.8; box-shadow: 0 0 0 4px rgba(244, 63, 94, 0.2); }
+}
+
+/* Radar signal badge — tambahan kelas veto */
+.radar-signal-badge.veto {
+  background: rgba(244, 63, 94, 0.18);
+  border: 1px solid rgba(244, 63, 94, 0.5);
+  color: #fb7185;
+  animation: btc-dump-pulse 1.2s ease-in-out infinite;
 }
 
 /* ================= MAIN WORKSPACE ================= */
