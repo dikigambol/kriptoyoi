@@ -210,6 +210,27 @@
       </div>
 
       <div class="radar-confluence-group">
+        <!-- Signal Score (P1) -->
+        <div class="confluence-item score-item" title="Signal Score 0–100 berdasarkan 7 komponen (Spec §14)">
+          <span class="cf-label">Signal Score</span>
+          <div class="score-display-row">
+            <span class="score-circle" id="signalScoreCircle">--</span>
+            <span class="score-label-text" id="signalScoreLabel">--</span>
+          </div>
+        </div>
+
+        <!-- Market Regime (P1) -->
+        <div class="confluence-item regime-item" title="Market Regime: CHOP Index + ADX (Spec §9)">
+          <span class="cf-label">Market Regime</span>
+          <div class="regime-row">
+            <span class="regime-badge" id="regimeBadge">--</span>
+          </div>
+          <div class="regime-metrics-row">
+            <span class="regime-metric" id="chopBadge">CHOP: --</span>
+            <span class="regime-metric" id="adxBadge">ADX: --</span>
+          </div>
+        </div>
+
         <!-- MTF Confluence Matrix (P0) -->
         <div class="confluence-item mtf-matrix-item" title="P0: Multi-Timeframe Alignment (1H, 15M, 5M, 1M)">
           <span class="cf-label">MTF Confluence</span>
@@ -247,6 +268,15 @@
             <div class="pressure-fill-buy" id="pressureFillBuy" style="width: 50%;"></div>
           </div>
           <span class="pressure-text" id="pressureText">50% Beli</span>
+        </div>
+      </div>
+
+      <!-- Setup Detection Panel (P1) -->
+      <div class="radar-setups-group" id="radarSetupsGroup" style="display:none;">
+        <div class="setups-label">📋 Setup Terdeteksi:</div>
+        <div class="setups-list" id="setupsList">--</div>
+        <div class="setup-ttl-row">
+          <span class="ttl-badge" id="signalTtlBadge">TTL: --</span>
         </div>
       </div>
 
@@ -291,6 +321,20 @@
         <div class="net-rr-viability-badge" id="netRRViabilityBadge" style="display:none;">
           <span id="netRRViabilityText">--</span>
         </div>
+      </div>
+
+      <!-- Trade State Machine Panel -->
+      <div class="trade-state-panel" id="tradeStatePanel" style="display:none;">
+        <span class="trade-state-badge pending" id="tradeStateBadge">--</span>
+        <span class="trade-state-info" id="tradeStateText">--</span>
+        <button class="trade-close-btn" id="tradeCloseBtn" title="Tutup panel trade">✕</button>
+      </div>
+
+      <!-- Open Trade Button -->
+      <div class="open-trade-wrapper">
+        <button class="open-trade-btn" id="openTradeBtn" title="Buka trade dari setup yang terdeteksi">
+          📋 Buka Trade
+        </button>
       </div>
     </section>
 

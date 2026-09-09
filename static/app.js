@@ -66,6 +66,11 @@
     p0PeriodicTimer: null,
     btcPulseData: null,
     btcPulseTimer: null,
+    rsiSeries: null,         // RSI(14) standalone line di stoch sub-chart
+    showRsi: true,
+    activeTradeId: null,     // ID trade yang sedang dipantau state machine
+    activeTrade: null,       // Objek trade terkini dari /api/trade/update
+    tradeUpdateTimer: null,  // Interval untuk auto-update state machine
     highPrice24h: null,
     lowPrice24h: null,
     openPrice24h: null,
@@ -123,6 +128,22 @@
     bosChochBadge: document.getElementById('bosChochBadge'),
     rvolBadge: document.getElementById('rvolBadge'),
     atrBadge: document.getElementById('atrBadge'),
+    // Score & Regime (P1)
+    signalScoreCircle: document.getElementById('signalScoreCircle'),
+    signalScoreLabel: document.getElementById('signalScoreLabel'),
+    regimeBadge: document.getElementById('regimeBadge'),
+    chopBadge: document.getElementById('chopBadge'),
+    adxBadge: document.getElementById('adxBadge'),
+    // Setup Detection (P1)
+    radarSetupsGroup: document.getElementById('radarSetupsGroup'),
+    setupsList: document.getElementById('setupsList'),
+    signalTtlBadge: document.getElementById('signalTtlBadge'),
+    // Trade State Machine
+    openTradeBtn: document.getElementById('openTradeBtn'),
+    tradeStatePanel: document.getElementById('tradeStatePanel'),
+    tradeStateBadge: document.getElementById('tradeStateBadge'),
+    tradeStateText: document.getElementById('tradeStateText'),
+    tradeCloseBtn: document.getElementById('tradeCloseBtn'),
     // Coin Modal Trigger & Elements
     searchPairBtn: document.getElementById('searchPairBtn'),
     selectorCurrentCoin: document.getElementById('selectorCurrentCoin'),
@@ -331,6 +352,30 @@
     }
 
     return { kData, dData };
+  }
+
+  // --- RSI(14) Standalone Calculation ---
+  function calculateRSI(candles, period) {
+    period = period || 14;
+    if (!candles || candles.length < period + 1) return [];
+    const results = [];
+    let avgGain = 0, avgLoss = 0;
+    for (let i = 1; i <= period; i++) {
+      const diff = candles[i].close - candles[i - 1].close;
+      if (diff >= 0) avgGain += diff; else avgLoss -= diff;
+    }
+    avgGain /= period; avgLoss /= period;
+    const calcRsi = (ag, al) => al === 0 ? 100 : (ag === 0 ? 0 : 100 - 100 / (1 + ag / al));
+    results.push({ time: candles[period].time, value: parseFloat(calcRsi(avgGain, avgLoss).toFixed(2)) });
+    for (let i = period + 1; i < candles.length; i++) {
+      const diff = candles[i].close - candles[i - 1].close;
+      const gain = diff >= 0 ? diff : 0;
+      const loss = diff < 0 ? -diff : 0;
+      avgGain = (avgGain * (period - 1) + gain) / period;
+      avgLoss = (avgLoss * (period - 1) + loss) / period;
+      results.push({ time: candles[i].time, value: parseFloat(calcRsi(avgGain, avgLoss).toFixed(2)) });
+    }
+    return results;
   }
 
   // --- Scalper Signal Generator (Metode 1: Trend & Momentum) ---
@@ -855,6 +900,231 @@
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Audio Web Alert — Web Audio API Dual-Frequency Chime (Roadmap Addendum §8)
+  // ---------------------------------------------------------------------------
+  const _audioCtxHolder = { ctx: null, lastAlertTime: 0 };
+
+  function _getAudioCtx() {
+    if (!_audioCtxHolder.ctx) {
+      try {
+        _audioCtxHolder.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      } catch (e) { return null; }
+    }
+    return _audioCtxHolder.ctx;
+  }
+
+  function playScalpAlert(type) {
+    type = type || 'buy';
+    const ctx = _getAudioCtx();
+    if (!ctx) return;
+    const now = Date.now();
+    if (now - _audioCtxHolder.lastAlertTime < 8000) return;
+    _audioCtxHolder.lastAlertTime = now;
+    if (ctx.state === 'suspended') ctx.resume();
+    const configs = {
+      buy:   [{ freq: 523.25, dur: 0.12 }, { freq: 659.25, dur: 0.12 }, { freq: 783.99, dur: 0.18 }],
+      alert: [{ freq: 880.00, dur: 0.10 }, { freq: 1046.5, dur: 0.10 }, { freq: 880.00, dur: 0.10 }],
+      warn:  [{ freq: 440.00, dur: 0.15 }, { freq: 349.23, dur: 0.20 }],
+    };
+    const tones = configs[type] || configs.buy;
+    let t = ctx.currentTime + 0.05;
+    tones.forEach(function(tone) {
+      const osc  = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(tone.freq, t);
+      gain.gain.setValueAtTime(0.0, t);
+      gain.gain.linearRampToValueAtTime(0.18, t + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + tone.dur);
+      osc.start(t);
+      osc.stop(t + tone.dur + 0.02);
+      t += tone.dur + 0.03;
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Render Score, Regime, Setups, TTL (P1)
+  // ---------------------------------------------------------------------------
+  function renderSignalScore(scoreData) {
+    if (!scoreData) return;
+    const score    = scoreData.score || 0;
+    const cat      = scoreData.category || 'NO_TRADE';
+    const catLabel = scoreData.category_label || '--';
+    if (el.signalScoreCircle) {
+      el.signalScoreCircle.textContent = score;
+      el.signalScoreCircle.className = 'score-circle ' + (
+        cat === 'VERY_STRONG' ? 'very-strong' :
+        cat === 'STRONG'      ? 'strong' :
+        cat === 'WATCH'       ? 'watch' :
+        cat === 'WEAK'        ? 'weak' : 'no-trade'
+      );
+      const bd = scoreData.breakdown || {};
+      el.signalScoreCircle.title = Object.entries(bd).map(function(e) { return e[0] + ': ' + e[1]; }).join(' | ');
+    }
+    if (el.signalScoreLabel) el.signalScoreLabel.textContent = catLabel;
+  }
+
+  function renderMarketRegime(regimeData) {
+    if (!regimeData) return;
+    if (el.regimeBadge) {
+      el.regimeBadge.textContent = regimeData.regime_label || '--';
+      const r = regimeData.regime || 'RANGING';
+      el.regimeBadge.className = 'regime-badge ' + (
+        r === 'TRENDING_UP'   ? 'bull' :
+        r === 'TRENDING_DOWN' ? 'bear' :
+        r === 'HIGH_VOL'      ? 'high-vol' : 'range'
+      );
+      el.regimeBadge.title = 'Scalp Filter: ' + (regimeData.scalp_filter || '--');
+    }
+    if (el.chopBadge) {
+      const chop = regimeData.chop || 0;
+      el.chopBadge.textContent = 'CHOP: ' + chop.toFixed(1);
+      el.chopBadge.className = 'regime-metric ' + (chop > 61.8 ? 'warn' : (chop < 38.2 ? 'strong' : ''));
+      el.chopBadge.title = chop > 61.8 ? 'Choppy' : (chop < 38.2 ? 'Trending' : 'Transisi');
+    }
+    if (el.adxBadge) {
+      const adx = regimeData.adx || 0;
+      el.adxBadge.textContent = 'ADX: ' + adx.toFixed(1);
+      el.adxBadge.className = 'regime-metric ' + (adx >= 25 ? 'strong' : (adx < 20 ? 'warn' : ''));
+      el.adxBadge.title = '+DI: ' + (regimeData.plus_di || 0).toFixed(1) + ' | -DI: ' + (regimeData.minus_di || 0).toFixed(1);
+    }
+  }
+
+  function renderSetups(setups, ttl) {
+    if (!el.radarSetupsGroup || !el.setupsList) return;
+    if (!setups || setups.length === 0) {
+      el.radarSetupsGroup.style.display = 'none';
+      return;
+    }
+    el.radarSetupsGroup.style.display = 'flex';
+    var html = setups.map(function(s) {
+      var qClass = s.quality === 'STRONG' ? 'setup-strong' : (s.quality === 'MODERATE' ? 'setup-moderate' : 'setup-weak');
+      var entry  = s.entry_zone ? formatPrice(s.entry_zone[0], state.symbol) + ' \u2013 ' + formatPrice(s.entry_zone[1], state.symbol) : '--';
+      var conds  = (s.conditions_met || []).join(' \xB7 ');
+      return '<div class="setup-item ' + qClass + '" title="' + conds + '">'
+        + '<span class="setup-label">' + s.label + '</span>'
+        + '<span class="setup-quality-tag">' + s.quality + '</span>'
+        + '<span class="setup-entry">Entry: ' + entry + '</span>'
+        + '</div>';
+    }).join('');
+    el.setupsList.innerHTML = html;
+    if (el.signalTtlBadge && ttl) {
+      var ttlClass = ttl.ttl_status === 'EXPIRED' ? 'ttl-expired' : (ttl.ttl_status === 'EXPIRING_SOON' ? 'ttl-warn' : 'ttl-active');
+      el.signalTtlBadge.textContent = ttl.is_expired
+        ? '\u23F0 EXPIRED'
+        : '\u23F1 TTL: ' + ttl.candles_remaining + ' candle (' + ttl.seconds_remaining + 's)';
+      el.signalTtlBadge.className = 'ttl-badge ' + ttlClass;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Trade State Machine — Frontend Integration
+  // ---------------------------------------------------------------------------
+
+  async function openTrade(p0Data) {
+    if (!p0Data || !p0Data.setups || p0Data.setups.length === 0) return;
+    if (!p0Data.friction || !p0Data.friction.tp1) return;
+
+    const bestSetup = p0Data.setups[0];
+    const tp1 = p0Data.friction.tp1;
+    const tp2 = p0Data.friction.tp2;
+
+    try {
+      const params = new URLSearchParams({
+        symbol:       state.symbol,
+        interval:     state.interval,
+        entry_price:  tp1.entry,
+        tp1_price:    tp1.tp,
+        tp2_price:    tp2.tp,
+        sl_price:     tp1.sl,
+        signal_score: p0Data.signal_score ? p0Data.signal_score.score : 0,
+        setup_type:   bestSetup.type,
+        notify:       'true',
+      });
+      const resp = await fetch('/api/trade/open?' + params.toString(), { method: 'POST' });
+      if (!resp.ok) return;
+      const data = await resp.json();
+      state.activeTradeId = data.trade_id;
+      state.activeTrade   = data.trade;
+      renderTradeState(data.trade);
+      startTradeUpdateLoop();
+    } catch (e) {
+      console.warn('openTrade error:', e);
+    }
+  }
+
+  async function updateTrade() {
+    if (!state.activeTradeId || !state.lastPrice) return;
+    try {
+      const params = new URLSearchParams({
+        trade_id:      state.activeTradeId,
+        current_price: state.lastPrice,
+        notify:        'true',
+      });
+      const resp = await fetch('/api/trade/update?' + params.toString(), { method: 'POST' });
+      if (!resp.ok) return;
+      const data = await resp.json();
+      state.activeTrade = data.trade;
+      renderTradeState(data.trade);
+
+      // Stop auto-update jika state terminal
+      const terminal = new Set(['TP2_HIT','STOPPED_BE','STOPPED_OUT','EXPIRED','INVALIDATED']);
+      if (terminal.has(data.new_state)) stopTradeUpdateLoop();
+    } catch (e) {
+      console.warn('updateTrade error:', e);
+    }
+  }
+
+  function startTradeUpdateLoop() {
+    stopTradeUpdateLoop();
+    state.tradeUpdateTimer = setInterval(updateTrade, 5000); // tiap 5 detik
+  }
+
+  function stopTradeUpdateLoop() {
+    if (state.tradeUpdateTimer) { clearInterval(state.tradeUpdateTimer); state.tradeUpdateTimer = null; }
+  }
+
+  function renderTradeState(trade) {
+    if (!el.tradeStatePanel || !el.tradeStateBadge || !el.tradeStateText) return;
+    if (!trade) { el.tradeStatePanel.style.display = 'none'; return; }
+
+    el.tradeStatePanel.style.display = 'flex';
+    const s = trade.state;
+    const labels = {
+      DETECTED:         '🔍 Terdeteksi',
+      PENDING_ENTRY:    '⏳ Menunggu Entry',
+      ACTIVE:           '🟢 AKTIF',
+      TP1_HIT:          '✅ TP1 Hit',
+      BREAKEVEN_ACTIVE: '🔒 Breakeven',
+      TP2_HIT:          '🎯 TP2 Hit',
+      STOPPED_BE:       '🔐 Stop BE',
+      STOPPED_OUT:      '❌ Stop Loss',
+      EXPIRED:          '⏰ Expired',
+      INVALIDATED:      '⚠️ Invalid',
+    };
+    const cls = {
+      ACTIVE: 'active', TP1_HIT: 'tp1', BREAKEVEN_ACTIVE: 'be',
+      TP2_HIT: 'win', STOPPED_OUT: 'loss', STOPPED_BE: 'be',
+      EXPIRED: 'expired', INVALIDATED: 'expired',
+    };
+    el.tradeStateBadge.textContent = labels[s] || s;
+    el.tradeStateBadge.className = 'trade-state-badge ' + (cls[s] || 'pending');
+
+    const prec = p => formatPrice(p, state.symbol);
+    let info = `Entry: ${prec(trade.entry_price)} | SL: ${prec(trade.sl_price)} | TP1: ${prec(trade.tp1_price)}`;
+    if (trade.partial_filled) info += ` | PnL 50%: +${trade.pnl_partial_pct}%`;
+    el.tradeStateText.textContent = info;
+
+    if (el.openTradeBtn) {
+      const terminal = new Set(['TP2_HIT','STOPPED_BE','STOPPED_OUT','EXPIRED','INVALIDATED']);
+      el.openTradeBtn.textContent = terminal.has(s) ? '📋 Buka Trade Baru' : '⏸ Trade Aktif';
+      el.openTradeBtn.disabled = !terminal.has(s) && s !== 'DETECTED';
+    }
+  }
+
   function renderP0Analysis(data) {
     if (!data || data.error) return;
 
@@ -1012,9 +1282,29 @@
     // 7. BTC Gatekeeper (dari data P0 langsung — sync dengan analisis)
     if (data.btc_gatekeeper) {
       renderBtcGatekeeper(data.btc_gatekeeper);
-      // Update state pulse juga agar polling berikutnya punya baseline
       if (data.btc_gatekeeper.status !== 'NO_DATA') {
         state.btcPulseData = data.btc_gatekeeper;
+      }
+    }
+
+    // 8. Market Regime (P1)
+    if (data.regime) renderMarketRegime(data.regime);
+
+    // 9. Signal Score (P1)
+    if (data.signal_score) renderSignalScore(data.signal_score);
+
+    // 10. Setup Detection + TTL (P1)
+    renderSetups(data.setups, data.signal_ttl);
+
+    // 11. Audio Alert — chime saat sinyal STRONG+ dan setup terdeteksi
+    if (data.signal_score && data.setups && data.setups.length > 0) {
+      const cat = data.signal_score.category;
+      const topSetup = data.setups[0];
+      const isBuySetup = topSetup && topSetup.direction === 'LONG';
+      if (cat === 'VERY_STRONG' && isBuySetup) {
+        playScalpAlert('alert');
+      } else if (cat === 'STRONG' && isBuySetup) {
+        playScalpAlert('buy');
       }
     }
   }
@@ -1185,6 +1475,9 @@
       title: 'EMA 50',
     });
 
+    // RSI(14) Series — ditambahkan ke stochChart sub-panel (skala terpisah kanan)
+    // Akan diinisialisasi setelah stochChart dibuat di bawah
+
     // 2. STOCHASTIC RSI SUB-CHART (Panel Bawah)
     if (el.stochRsiContainer) {
       const stochOptions = {
@@ -1265,6 +1558,22 @@
         axisLabelVisible: true,
         title: 'OS 20',
       });
+
+      // RSI(14) line — di panel yang sama dengan Stoch RSI, skala kanan terpisah (0-100)
+      if (state.showRsi) {
+        state.rsiSeries = state.stochChart.addLineSeries({
+          color: 'rgba(168, 85, 247, 0.75)',
+          lineWidth: 1,
+          lineStyle: LightweightCharts.LineStyle.Dashed,
+          priceLineVisible: false,
+          lastValueVisible: true,
+          title: 'RSI 14',
+          autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }),
+        });
+        // 70 / 30 reference lines
+        state.rsiSeries.createPriceLine({ price: 70, color: 'rgba(168,85,247,0.35)', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false, title: '' });
+        state.rsiSeries.createPriceLine({ price: 30, color: 'rgba(168,85,247,0.35)', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false, title: '' });
+      }
 
       // Synchronize time scales with re-entrancy lock to prevent feedback loops and misalignment
       let isSyncingRange = false;
@@ -1634,6 +1943,12 @@
         state.stochDSeries.setData(stochData.dData);
       }
 
+      // RSI(14) populate
+      if (state.rsiSeries) {
+        const rsiData = calculateRSI(candles, 14);
+        if (rsiData.length > 0) state.rsiSeries.setData(rsiData);
+      }
+
       // Generate Scalper Signals (Buy/Exit Markers on Candlestick Chart)
       state.scalperMarkers = generateScalperSignals(candles, ema9Data, ema21Data, stochData.kData, stochData.dData);
       if (state.candleSeries) {
@@ -1949,6 +2264,12 @@
       if (state.stochKSeries && state.stochDSeries) {
         state.stochKSeries.setData(stochData.kData);
         state.stochDSeries.setData(stochData.dData);
+      }
+
+      // RSI(14) update on candle close
+      if (state.rsiSeries && state.candlesCache.length > 15) {
+        const rsiData = calculateRSI(state.candlesCache, 14);
+        if (rsiData.length > 0) state.rsiSeries.setData(rsiData);
       }
 
       state.scalperMarkers = generateScalperSignals(state.candlesCache, ema9Data, ema21Data, stochData.kData, stochData.dData);
@@ -2723,6 +3044,23 @@
         try { state.stochChart.timeScale().fitContent(); } catch (e) { }
       }
     });
+
+    // Open Trade button
+    if (el.openTradeBtn) {
+      el.openTradeBtn.addEventListener('click', () => {
+        if (state.p0AnalysisData) openTrade(state.p0AnalysisData);
+      });
+    }
+
+    // Close Trade button
+    if (el.tradeCloseBtn) {
+      el.tradeCloseBtn.addEventListener('click', () => {
+        stopTradeUpdateLoop();
+        state.activeTradeId = null;
+        state.activeTrade   = null;
+        if (el.tradeStatePanel) el.tradeStatePanel.style.display = 'none';
+      });
+    }
 
     // Sidebar Tabs
     document.querySelectorAll('.tab-btn').forEach((btn) => {

@@ -11,6 +11,11 @@ Implements:
 6. Multi-Timeframe (MTF) Confluence Engine (1H, 15M, 5M, 1M Matrix)
 7. Friction Cost Engine (Tokocrypto Fee + PPh + PPN + Slippage, Net R:R Validation)
 8. BTC Market Gatekeeper (Korelasi Makro – veto sinyal Long altcoin saat BTC dump)
+9. Market Regime Engine (CHOP Index + ADX + EMA alignment → TRENDING/RANGING/BREAKOUT)
+10. Liquidity Sweep Detection (Wick sweep + rejection close §4.2)
+11. Setup Detection Engine (Breakout, Breakout Retest, Liquidity Sweep, Trend Pullback)
+12. Signal Scoring Engine (Weighted 0–100 multi-factor score §14)
+13. Signal TTL / Expiration (5-candle 1M, 6-candle 5M §4.4)
 """
 
 from typing import List, Dict, Any, Optional, Tuple
@@ -813,6 +818,701 @@ def analyze_btc_pulse(
     }
 
 
+# ---------------------------------------------------------------------------
+# 9. Market Regime Engine (Spec §9)
+# Kombinasi CHOP Index + ADX + EMA alignment → klasifikasi market regime
+# ---------------------------------------------------------------------------
+
+def calculate_chop_index(candles: List[Dict[str, Any]], period: int = 14) -> float:
+    """
+    Choppiness Index: 100 × log10(ATR_sum(N) / (HighestHigh − LowestLow)) / log10(N)
+
+    Interpretasi:
+      CHOP > 61.8  → Market CHOPPY / ranging
+      CHOP < 38.2  → Market TRENDING
+      38.2–61.8    → Transisi / tidak jelas
+    """
+    if len(candles) < period + 1:
+        return 50.0  # nilai netral
+
+    window = candles[-period:]
+
+    # Sum of ATR (True Range) untuk setiap bar dalam window
+    tr_sum = 0.0
+    for i in range(1, len(window)):
+        h = float(window[i]["high"])
+        l = float(window[i]["low"])
+        pc = float(window[i - 1]["close"])
+        tr_sum += max(h - l, abs(h - pc), abs(l - pc))
+
+    # Highest High dan Lowest Low dalam window
+    highest = max(float(c["high"]) for c in window)
+    lowest  = min(float(c["low"])  for c in window)
+    hl_range = highest - lowest
+
+    if hl_range <= 0 or tr_sum <= 0:
+        return 50.0
+
+    chop = 100.0 * math.log10(tr_sum / hl_range) / math.log10(period)
+    return round(min(max(chop, 0.0), 100.0), 2)
+
+
+def calculate_adx(candles: List[Dict[str, Any]], period: int = 14) -> Dict[str, Any]:
+    """
+    Average Directional Index (ADX) dengan +DI dan -DI (Wilder's method).
+
+    Interpretasi ADX:
+      ADX < 20    → No trend (RANGING)
+      20–25       → Weak trend
+      25–40       → Strong trend
+      > 40        → Very strong / potentially overextended
+    """
+    if len(candles) < period * 2 + 1:
+        return {"adx": 20.0, "plus_di": 0.0, "minus_di": 0.0, "trend_strength": "WEAK"}
+
+    tr_list: List[float]   = []
+    plus_dm_list: List[float]  = []
+    minus_dm_list: List[float] = []
+
+    for i in range(1, len(candles)):
+        h  = float(candles[i]["high"])
+        l  = float(candles[i]["low"])
+        ph = float(candles[i - 1]["high"])
+        pl = float(candles[i - 1]["low"])
+        pc = float(candles[i - 1]["close"])
+
+        tr = max(h - l, abs(h - pc), abs(l - pc))
+        tr_list.append(tr)
+
+        up_move   = h - ph
+        down_move = pl - l
+        plus_dm  = up_move   if (up_move   > down_move and up_move   > 0) else 0.0
+        minus_dm = down_move if (down_move > up_move   and down_move > 0) else 0.0
+        plus_dm_list.append(plus_dm)
+        minus_dm_list.append(minus_dm)
+
+    def wilder_smooth(data: List[float], p: int) -> List[float]:
+        result = [sum(data[:p])]
+        for i in range(p, len(data)):
+            result.append(result[-1] - result[-1] / p + data[i])
+        return result
+
+    smooth_tr  = wilder_smooth(tr_list, period)
+    smooth_pdm = wilder_smooth(plus_dm_list, period)
+    smooth_mdm = wilder_smooth(minus_dm_list, period)
+
+    dx_list: List[float] = []
+    plus_di_list: List[float]  = []
+    minus_di_list: List[float] = []
+
+    for i in range(len(smooth_tr)):
+        if smooth_tr[i] == 0:
+            continue
+        pdi = 100.0 * smooth_pdm[i] / smooth_tr[i]
+        mdi = 100.0 * smooth_mdm[i] / smooth_tr[i]
+        plus_di_list.append(pdi)
+        minus_di_list.append(mdi)
+        dsum = pdi + mdi
+        dx = 100.0 * abs(pdi - mdi) / dsum if dsum > 0 else 0.0
+        dx_list.append(dx)
+
+    if len(dx_list) < period:
+        return {"adx": 20.0, "plus_di": 0.0, "minus_di": 0.0, "trend_strength": "WEAK"}
+
+    # ADX = Wilder smoothing of DX
+    adx_val = sum(dx_list[-period:]) / period
+    plus_di  = plus_di_list[-1]  if plus_di_list  else 0.0
+    minus_di = minus_di_list[-1] if minus_di_list else 0.0
+
+    if adx_val >= 40:
+        trend_strength = "VERY_STRONG"
+    elif adx_val >= 25:
+        trend_strength = "STRONG"
+    elif adx_val >= 20:
+        trend_strength = "MODERATE"
+    else:
+        trend_strength = "WEAK"
+
+    return {
+        "adx":            round(adx_val, 2),
+        "plus_di":        round(plus_di, 2),
+        "minus_di":       round(minus_di, 2),
+        "trend_strength": trend_strength,
+    }
+
+
+def analyze_market_regime(candles: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Tentukan Market Regime menggunakan CHOP Index + ADX + EMA alignment.
+
+    Regimes:
+      TRENDING_UP   – trending naik (ADX kuat, CHOP rendah, EMA bullish)
+      TRENDING_DOWN – trending turun
+      RANGING       – sideways / choppy (CHOP tinggi, ADX lemah)
+      BREAKOUT      – baru keluar dari range (CHOP turun tiba-tiba + volume spike)
+      HIGH_VOL      – volatilitas ekstrem
+      LOW_VOL       – sangat sepi
+    """
+    if len(candles) < 30:
+        return {
+            "regime": "RANGING",
+            "regime_label": "⚖️ Insufficient Data",
+            "chop": 50.0,
+            "adx": 20.0,
+            "plus_di": 0.0,
+            "minus_di": 0.0,
+            "trend_direction": "NEUTRAL",
+            "scalp_filter": "WAIT",
+        }
+
+    chop = calculate_chop_index(candles, period=14)
+    adx_data = calculate_adx(candles, period=14)
+    adx  = adx_data["adx"]
+    pdi  = adx_data["plus_di"]
+    mdi  = adx_data["minus_di"]
+
+    ema_data = calculate_ema_engine(candles)
+    atr_data = calculate_atr(candles, period=14)
+    atr_class = atr_data.get("classification", "NORMAL")
+
+    # Arah trend berdasarkan +DI vs -DI dan EMA alignment
+    if pdi > mdi and ema_data.get("is_bullish_stack"):
+        trend_direction = "UP"
+    elif mdi > pdi and ema_data.get("is_bearish_stack"):
+        trend_direction = "DOWN"
+    elif pdi > mdi:
+        trend_direction = "UP"
+    elif mdi > pdi:
+        trend_direction = "DOWN"
+    else:
+        trend_direction = "NEUTRAL"
+
+    # Klasifikasi regime
+    is_trending = adx >= 25 and chop < 55
+    is_choppy   = chop >= 61.8 or adx < 20
+
+    if atr_class == "EXTREME":
+        regime = "HIGH_VOL"
+        regime_label = "🌪️ High Volatility – Hati-hati"
+        scalp_filter  = "CAUTION"
+    elif atr_class == "LOW" and chop > 55:
+        regime = "LOW_VOL"
+        regime_label = "😴 Low Volatility – Market Sepi"
+        scalp_filter  = "WAIT"
+    elif is_trending and trend_direction == "UP":
+        regime = "TRENDING_UP"
+        regime_label = f"🟢 Trending Up (ADX {adx:.0f}, CHOP {chop:.0f})"
+        scalp_filter  = "LONG_PREFERRED"
+    elif is_trending and trend_direction == "DOWN":
+        regime = "TRENDING_DOWN"
+        regime_label = f"🔴 Trending Down (ADX {adx:.0f}, CHOP {chop:.0f})"
+        scalp_filter  = "EXIT_OR_SHORT"
+    elif is_choppy:
+        regime = "RANGING"
+        regime_label = f"⚖️ Ranging / Choppy (CHOP {chop:.0f}, ADX {adx:.0f})"
+        scalp_filter  = "WAIT"
+    else:
+        # Transisi / ambiguous
+        regime = "RANGING"
+        regime_label = f"🔄 Transisi (CHOP {chop:.0f}, ADX {adx:.0f})"
+        scalp_filter  = "WAIT"
+
+    return {
+        "regime":           regime,
+        "regime_label":     regime_label,
+        "chop":             chop,
+        "adx":              adx,
+        "plus_di":          pdi,
+        "minus_di":         mdi,
+        "trend_direction":  trend_direction,
+        "trend_strength":   adx_data["trend_strength"],
+        "scalp_filter":     scalp_filter,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 10. Liquidity Sweep Detection (Spec §11, Roadmap Addendum §4.2)
+# ---------------------------------------------------------------------------
+
+def detect_liquidity_sweeps(
+    candles: List[Dict[str, Any]],
+    swing_highs: List[Dict[str, Any]],
+    swing_lows: List[Dict[str, Any]],
+    lookback: int = 10,
+) -> List[Dict[str, Any]]:
+    """
+    Deteksi Liquidity Sweep (stop hunt / fakeout) berdasarkan:
+    - Wick menembus level Swing High/Low
+    - Body Close tetap di dalam range sebelumnya
+    - Diikuti rejection (close berlawanan arah) dalam 1-2 candle
+
+    Roadmap Addendum §4.2:
+      Bullish Sweep: High > Prev Swing High, tetapi Close <= Prev Swing High
+    """
+    sweeps: List[Dict[str, Any]] = []
+    if not candles or not (swing_highs or swing_lows):
+        return sweeps
+
+    recent = candles[-lookback:]
+
+    for i, candle in enumerate(recent):
+        c_high  = float(candle["high"])
+        c_low   = float(candle["low"])
+        c_close = float(candle["close"])
+        c_open  = float(candle["open"])
+        c_time  = candle.get("time", 0)
+
+        # --- Bearish Sweep of Highs (Wick ke atas, rejection) ---
+        for sh in swing_highs[-5:]:
+            sh_price = sh["price"]
+            if c_high > sh_price and c_close <= sh_price:
+                # Rejection konfirmasi: badan candle bearish
+                is_rejection = c_close < c_open
+                sweeps.append({
+                    "type":           "BEARISH_SWEEP_OF_HIGH",
+                    "swept_level":    round(sh_price, 6),
+                    "sweep_high":     round(c_high, 6),
+                    "close":          round(c_close, 6),
+                    "time":           c_time,
+                    "confirmed":      is_rejection,
+                    "label":          f"🔻 Sweep of High ({sh_price:.4f})",
+                })
+
+        # --- Bullish Sweep of Lows (Wick ke bawah, rejection) ---
+        for sl in swing_lows[-5:]:
+            sl_price = sl["price"]
+            if c_low < sl_price and c_close >= sl_price:
+                # Rejection konfirmasi: badan candle bullish
+                is_rejection = c_close > c_open
+                sweeps.append({
+                    "type":           "BULLISH_SWEEP_OF_LOW",
+                    "swept_level":    round(sl_price, 6),
+                    "sweep_low":      round(c_low, 6),
+                    "close":          round(c_close, 6),
+                    "time":           c_time,
+                    "confirmed":      is_rejection,
+                    "label":          f"🟢 Sweep of Low ({sl_price:.4f})",
+                })
+
+    # Kembalikan hanya yang terbaru (maks 3 sweep)
+    return sweeps[-3:] if sweeps else []
+
+
+# ---------------------------------------------------------------------------
+# 11. Setup Detection Engine (Spec §13)
+# 4 tipe setup scalping: Breakout, Breakout Retest, Liquidity Sweep, Trend Pullback
+# ---------------------------------------------------------------------------
+
+def detect_scalping_setups(
+    candles: List[Dict[str, Any]],
+    structure: Dict[str, Any],
+    sr: Dict[str, Any],
+    volume: Dict[str, Any],
+    momentum: Dict[str, Any],
+    regime: Dict[str, Any],
+    sweeps: List[Dict[str, Any]],
+    atr: float,
+    current_price: float,
+) -> List[Dict[str, Any]]:
+    """
+    Deteksi setup scalping berdasarkan kombinasi sinyal.
+
+    Setup yang terdeteksi:
+    1. TREND_PULLBACK  – trend jelas + pullback ke support/EMA
+    2. BREAKOUT        – harga break resistance + volume tinggi
+    3. BREAKOUT_RETEST – setelah breakout, harga kembali test level lama
+    4. LIQUIDITY_SWEEP – sweep + rejection kuat (bullish reversal)
+
+    Setiap setup memiliki:
+    - entry_zone: [low, high]
+    - invalidation: level yang membatalkan setup
+    - setup_quality: WEAK / MODERATE / STRONG
+    - conditions_met: list alasan
+    """
+    setups: List[Dict[str, Any]] = []
+    if not candles or len(candles) < 15:
+        return setups
+
+    ema9  = momentum.get("ema9")
+    ema21 = momentum.get("ema21")
+    ema50 = momentum.get("ema50")
+    trend = structure.get("trend", "RANGE")
+    rvol  = volume.get("rvol", 1.0)
+    regime_name = regime.get("regime", "RANGING")
+    nearest_sup = sr.get("nearest_support", {}).get("price")
+    nearest_res = sr.get("nearest_resistance", {}).get("price")
+
+    # --- 1. TREND PULLBACK ---
+    # Kondisi: trend jelas + harga dekat EMA 9/21 atau support + momentum mulai recovery
+    if trend == "BULLISH" and regime_name in ("TRENDING_UP", "RANGING"):
+        conditions: List[str] = []
+        quality_score = 0
+
+        # Harga dekat EMA21 (pullback zone)
+        ema21_dist_pct = abs(current_price - ema21) / ema21 * 100 if ema21 else 999
+        if ema21_dist_pct < 0.5:
+            conditions.append(f"Harga dekat EMA21 ({ema21_dist_pct:.2f}%)")
+            quality_score += 2
+        elif nearest_sup and abs(current_price - nearest_sup) / current_price * 100 < 0.8:
+            conditions.append("Harga dekat Support terdekat")
+            quality_score += 2
+
+        # EMA bullish stack
+        if momentum.get("is_bullish_stack"):
+            conditions.append("EMA 9 > 21 > 50 (Bullish Stack)")
+            quality_score += 2
+
+        # Volume normal/tinggi
+        if rvol >= 0.8:
+            conditions.append(f"RVOL {rvol}x (cukup)")
+            quality_score += 1
+
+        # BOS konfirmasi
+        if structure.get("last_bos") and structure["last_bos"].get("type") == "BULLISH_BOS":
+            conditions.append("Bullish BOS terkonfirmasi")
+            quality_score += 2
+
+        if len(conditions) >= 2:
+            entry_low  = current_price - 0.2 * atr
+            entry_high = current_price + 0.1 * atr
+            quality = "STRONG" if quality_score >= 6 else ("MODERATE" if quality_score >= 4 else "WEAK")
+            setups.append({
+                "type":           "TREND_PULLBACK",
+                "direction":      "LONG",
+                "label":          "📈 Trend Pullback (Long)",
+                "quality":        quality,
+                "quality_score":  quality_score,
+                "entry_zone":     [round(entry_low, 6), round(entry_high, 6)],
+                "invalidation":   round(current_price - 1.5 * atr, 6),
+                "conditions_met": conditions,
+            })
+
+    # --- 2. BREAKOUT ---
+    # Kondisi: harga baru break resistance + RVOL tinggi + momentum bullish
+    if nearest_res and trend in ("BULLISH", "RANGE"):
+        conditions = []
+        quality_score = 0
+        dist_to_res_pct = (nearest_res - current_price) / current_price * 100
+
+        # Harga sangat dekat dengan resistance (dalam 0.3%)
+        if 0 < dist_to_res_pct < 0.3:
+            conditions.append(f"Harga {dist_to_res_pct:.2f}% dari resistance {nearest_res:.4f}")
+            quality_score += 3
+
+        # Volume konfirmasi
+        if rvol >= 1.5:
+            conditions.append(f"RVOL {rvol}x (breakout confirmation)")
+            quality_score += 3
+        elif rvol >= 1.0:
+            conditions.append(f"RVOL {rvol}x (moderate)")
+            quality_score += 1
+
+        # Momentum bullish
+        if momentum.get("is_bullish_stack") or momentum.get("alignment") in ("BULLISH_ALIGNED", "SHORT_TERM_BULLISH"):
+            conditions.append("Momentum EMA bullish")
+            quality_score += 2
+
+        # Slope EMA positif
+        slope = momentum.get("slope_pct", 0)
+        if slope > 0.01:
+            conditions.append(f"EMA9 slope naik +{slope:.3f}%")
+            quality_score += 1
+
+        if len(conditions) >= 2:
+            entry_low  = nearest_res * 0.9997
+            entry_high = nearest_res * 1.003
+            quality = "STRONG" if quality_score >= 7 else ("MODERATE" if quality_score >= 4 else "WEAK")
+            setups.append({
+                "type":           "BREAKOUT",
+                "direction":      "LONG",
+                "label":          "🚀 Breakout (Long)",
+                "quality":        quality,
+                "quality_score":  quality_score,
+                "entry_zone":     [round(entry_low, 6), round(entry_high, 6)],
+                "invalidation":   round(nearest_res - 1.0 * atr, 6),
+                "conditions_met": conditions,
+            })
+
+    # --- 3. BREAKOUT RETEST ---
+    # Kondisi: setelah BOS bullish, harga kembali ke level yang di-break
+    if (structure.get("last_bos")
+            and structure["last_bos"].get("type") == "BULLISH_BOS"):
+        broken_level = structure["last_bos"].get("broken_level", 0)
+        if broken_level > 0:
+            dist_to_broken = (current_price - broken_level) / current_price * 100
+            conditions = []
+            quality_score = 0
+
+            # Harga kembali mendekati level BOS yang di-break (dalam 0.5%)
+            if 0 <= dist_to_broken < 0.5:
+                conditions.append(f"Retest level BOS {broken_level:.4f} ({dist_to_broken:.2f}%)")
+                quality_score += 3
+
+            if momentum.get("is_bullish_stack"):
+                conditions.append("EMA Bullish Stack")
+                quality_score += 2
+
+            if rvol >= 0.8:
+                conditions.append(f"RVOL {rvol}x")
+                quality_score += 1
+
+            if len(conditions) >= 2:
+                entry_low  = broken_level * 0.999
+                entry_high = broken_level * 1.002
+                quality = "STRONG" if quality_score >= 5 else ("MODERATE" if quality_score >= 3 else "WEAK")
+                setups.append({
+                    "type":           "BREAKOUT_RETEST",
+                    "direction":      "LONG",
+                    "label":          "🔄 Breakout Retest (Long)",
+                    "quality":        quality,
+                    "quality_score":  quality_score,
+                    "entry_zone":     [round(entry_low, 6), round(entry_high, 6)],
+                    "invalidation":   round(broken_level - 0.5 * atr, 6),
+                    "conditions_met": conditions,
+                })
+
+    # --- 4. LIQUIDITY SWEEP ---
+    # Kondisi: ada sweep + rejection konfirmasi + volume
+    confirmed_sweeps = [s for s in sweeps if s.get("confirmed") and s["type"] == "BULLISH_SWEEP_OF_LOW"]
+    if confirmed_sweeps:
+        latest_sweep = confirmed_sweeps[-1]
+        conditions = [latest_sweep["label"], "Rejection candle terkonfirmasi"]
+        quality_score = 4
+
+        if rvol >= 1.2:
+            conditions.append(f"RVOL {rvol}x (konfirmasi volume)")
+            quality_score += 2
+
+        if structure.get("last_choch") and structure["last_choch"].get("type") == "BULLISH_CHOCH":
+            conditions.append("Bullish CHoCH — reversal terkonfirmasi")
+            quality_score += 2
+
+        swept_level = latest_sweep.get("swept_level", current_price)
+        entry_low  = swept_level * 0.999
+        entry_high = current_price + 0.15 * atr
+        quality = "STRONG" if quality_score >= 7 else ("MODERATE" if quality_score >= 5 else "WEAK")
+        setups.append({
+            "type":           "LIQUIDITY_SWEEP",
+            "direction":      "LONG",
+            "label":          "⚡ Liquidity Sweep Reversal (Long)",
+            "quality":        quality,
+            "quality_score":  quality_score,
+            "entry_zone":     [round(entry_low, 6), round(entry_high, 6)],
+            "invalidation":   round(latest_sweep.get("sweep_low", swept_level) - 0.3 * atr, 6),
+            "conditions_met": conditions,
+        })
+
+    # Urutkan berdasarkan quality_score tertinggi
+    setups.sort(key=lambda s: s.get("quality_score", 0), reverse=True)
+    return setups[:3]  # maks 3 setup terbaik
+
+
+# ---------------------------------------------------------------------------
+# 12. Signal Scoring Engine (Spec §14)
+# Weighted 0–100 score dari 7 komponen
+# ---------------------------------------------------------------------------
+
+# Bobot komponen (total = 100)
+_SCORE_WEIGHTS = {
+    "market_structure": 25,
+    "mtf_alignment":    15,
+    "price_action":     20,
+    "volume":           15,
+    "momentum":         10,
+    "order_flow":        5,  # disederhanakan karena tidak ada order book
+    "volatility":        5,
+    "regime":            5,
+}
+
+def calculate_signal_score(
+    structure: Dict[str, Any],
+    mtf: Dict[str, Any],
+    volume: Dict[str, Any],
+    momentum: Dict[str, Any],
+    regime: Dict[str, Any],
+    candles: List[Dict[str, Any]],
+    setups: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    Hitung Signal Score 0–100 berdasarkan bobot Spec §14.
+
+    Kategori:
+      0–39    NO TRADE
+      40–59   WEAK
+      60–74   WATCH
+      75–89   STRONG
+      90–100  VERY STRONG
+    """
+    breakdown: Dict[str, Any] = {}
+
+    # 1. Market Structure (max 25)
+    struct_trend = structure.get("trend", "RANGE")
+    struct_strength = structure.get("structure_strength", 50)
+    has_bos   = structure.get("last_bos") is not None
+    has_choch = structure.get("last_choch") is not None
+
+    if struct_trend == "BULLISH":
+        s_struct = 18 if not has_bos else 22
+        s_struct += 3 if has_choch else 0
+    elif struct_trend == "BEARISH":
+        s_struct = 8
+    else:
+        s_struct = 10
+    s_struct = min(s_struct, 25)
+    breakdown["market_structure"] = s_struct
+
+    # 2. MTF Alignment (max 15)
+    bullish_count = mtf.get("bullish_count", 0)
+    bearish_count = mtf.get("bearish_count", 0)
+    dominant = max(bullish_count, bearish_count)
+    s_mtf = round((dominant / 4.0) * 15)
+    breakdown["mtf_alignment"] = s_mtf
+
+    # 3. Price Action (max 20) — kualitas candle + BOS + setup detection
+    s_pa = 8  # baseline
+    if setups:
+        best_setup = setups[0]
+        qs = best_setup.get("quality_score", 0)
+        s_pa = min(8 + qs, 20)
+    breakdown["price_action"] = s_pa
+
+    # 4. Volume (max 15)
+    rvol = volume.get("rvol", 1.0)
+    rvol_cls = volume.get("classification", "NORMAL")
+    if rvol >= 2.5:
+        s_vol = 10      # climactic — waspadai exhaustion
+    elif rvol >= 1.5:
+        s_vol = 15
+    elif rvol >= 0.8:
+        s_vol = 10
+    else:
+        s_vol = 3       # low volume — hindari breakout
+    breakdown["volume"] = s_vol
+
+    # 5. Momentum (max 10)
+    is_bull_stack = momentum.get("is_bullish_stack", False)
+    is_bear_stack = momentum.get("is_bearish_stack", False)
+    slope = momentum.get("slope_pct", 0)
+    if is_bull_stack:
+        s_mom = 10 if slope > 0 else 7
+    elif not is_bear_stack:
+        s_mom = 5
+    else:
+        s_mom = 2
+    breakdown["momentum"] = s_mom
+
+    # 6. Order Flow / Tape (max 5) — gunakan rvol sebagai proxy karena tidak ada order book
+    s_flow = 3 if rvol >= 1.0 else 1
+    breakdown["order_flow"] = s_flow
+
+    # 7. Volatility (max 5)
+    regime_name = regime.get("regime", "RANGING")
+    if regime_name in ("TRENDING_UP", "TRENDING_DOWN"):
+        s_vol_regime = 5
+    elif regime_name == "RANGING":
+        s_vol_regime = 3
+    else:
+        s_vol_regime = 1
+    breakdown["volatility"] = s_vol_regime
+
+    # 8. Regime bonus (max 5)
+    scalp_filter = regime.get("scalp_filter", "WAIT")
+    if scalp_filter == "LONG_PREFERRED":
+        s_regime = 5
+    elif scalp_filter == "CAUTION":
+        s_regime = 2
+    elif scalp_filter == "WAIT":
+        s_regime = 0
+    else:
+        s_regime = 3
+    breakdown["regime"] = s_regime
+
+    total = sum(breakdown.values())
+    total = min(max(total, 0), 100)
+
+    if total >= 90:
+        category = "VERY_STRONG"
+        category_label = "🔥 VERY STRONG"
+    elif total >= 75:
+        category = "STRONG"
+        category_label = "✅ STRONG"
+    elif total >= 60:
+        category = "WATCH"
+        category_label = "👀 WATCH"
+    elif total >= 40:
+        category = "WEAK"
+        category_label = "⚠️ WEAK"
+    else:
+        category = "NO_TRADE"
+        category_label = "🚫 NO TRADE"
+
+    return {
+        "score":           total,
+        "category":        category,
+        "category_label":  category_label,
+        "breakdown":       breakdown,
+        "weights":         _SCORE_WEIGHTS,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 13. Signal TTL / Expiration (Roadmap Addendum §4.4)
+# ---------------------------------------------------------------------------
+
+# Batas candle sebelum sinyal kadaluwarsa
+_TTL_CANDLES: Dict[str, int] = {
+    "1m": 5,   # 5 menit
+    "3m": 4,
+    "5m": 6,   # 30 menit
+    "15m": 4,
+    "30m": 3,
+    "1h": 3,
+}
+
+def calculate_signal_ttl(
+    interval: str,
+    candle_time: int,      # Unix timestamp candle saat sinyal terdeteksi
+    current_time: int,     # Unix timestamp sekarang
+) -> Dict[str, Any]:
+    """
+    Hitung sisa TTL sinyal (dalam candle dan detik).
+
+    Return:
+      candles_elapsed   : candle yang sudah berlalu sejak sinyal
+      candles_remaining : sisa candle sebelum expired
+      is_expired        : True jika melewati batas TTL
+      ttl_status        : ACTIVE / EXPIRING_SOON / EXPIRED
+    """
+    interval_sec_map = {
+        "1m": 60, "3m": 180, "5m": 300, "15m": 900,
+        "30m": 1800, "1h": 3600, "4h": 14400, "1d": 86400,
+    }
+    candle_sec = interval_sec_map.get(interval, 60)
+    max_candles = _TTL_CANDLES.get(interval, 5)
+
+    elapsed_sec    = max(current_time - candle_time, 0)
+    candles_elapsed   = elapsed_sec // candle_sec
+    candles_remaining = max(max_candles - candles_elapsed, 0)
+    is_expired     = candles_elapsed >= max_candles
+
+    if is_expired:
+        ttl_status = "EXPIRED"
+    elif candles_remaining <= 1:
+        ttl_status = "EXPIRING_SOON"
+    else:
+        ttl_status = "ACTIVE"
+
+    return {
+        "interval":           interval,
+        "max_candles":        max_candles,
+        "candles_elapsed":    int(candles_elapsed),
+        "candles_remaining":  int(candles_remaining),
+        "seconds_remaining":  int(candles_remaining * candle_sec),
+        "is_expired":         is_expired,
+        "ttl_status":         ttl_status,
+    }
+
+
 def run_full_p0_analysis(
     symbol: str,
     tf_candles: Dict[str, List[Dict[str, Any]]],
@@ -829,6 +1529,11 @@ def run_full_p0_analysis(
     - Volatility (ATR-14)
     - Volume (RVOL-20)
     - Momentum (EMA 9, 21, 50)
+    - Market Regime (CHOP + ADX)
+    - Liquidity Sweep Detection
+    - Setup Detection Engine (Breakout, Retest, Sweep, Pullback)
+    - Signal Scoring (0–100)
+    - Signal TTL / Expiration
     - Friction Cost Engine + Net R:R Validation (Roadmap Addendum §2)
     - BTC Market Gatekeeper — veto Long altcoin saat dump risk (Roadmap Addendum §5)
     """
@@ -857,6 +1562,46 @@ def run_full_p0_analysis(
 
     # 6. MTF Confluence
     mtf = analyze_mtf_confluence(tf_candles)
+
+    # 9. Market Regime Engine
+    regime = analyze_market_regime(candles)
+
+    # 10. Liquidity Sweep Detection
+    swings = detect_swing_points(candles, n=2)
+    sweeps = detect_liquidity_sweeps(
+        candles,
+        swing_highs=swings["highs"],
+        swing_lows=swings["lows"],
+    )
+
+    # 11. Setup Detection Engine
+    setups = detect_scalping_setups(
+        candles=candles,
+        structure=structure,
+        sr=sr,
+        volume=volume,
+        momentum=momentum,
+        regime=regime,
+        sweeps=sweeps,
+        atr=atr,
+        current_price=current_price,
+    )
+
+    # 12. Signal Scoring Engine
+    signal_score = calculate_signal_score(
+        structure=structure,
+        mtf=mtf,
+        volume=volume,
+        momentum=momentum,
+        regime=regime,
+        candles=candles,
+        setups=setups,
+    )
+
+    # 13. Signal TTL
+    import time as _time
+    current_ts = int(_time.time())
+    signal_ttl = calculate_signal_ttl(active_interval, current_ts, current_ts)
 
     # 7. Friction Cost Engine + Net R:R Calculation (Roadmap Addendum §2)
     #
@@ -958,6 +1703,11 @@ def run_full_p0_analysis(
         "momentum": momentum,
         "support_resistance": sr,
         "mtf": mtf,
+        "regime": regime,
+        "sweeps": sweeps,
+        "setups": setups,
+        "signal_score": signal_score,
+        "signal_ttl": signal_ttl,
         "friction": {
             "cost_detail": friction,
             "tp1": net_rr_tp1,
@@ -965,3 +1715,219 @@ def run_full_p0_analysis(
         },
         "btc_gatekeeper": btc_pulse,
     }
+
+
+# ---------------------------------------------------------------------------
+# Trade Lifecycle State Machine (Roadmap Addendum §6)
+# State: DETECTED → PENDING_ENTRY → ACTIVE → TP1_HIT → BREAKEVEN_ACTIVE →
+#        TP2_HIT | STOPPED_BE | STOPPED_OUT | EXPIRED | INVALIDATED
+# ---------------------------------------------------------------------------
+
+# State yang valid
+TRADE_STATES = frozenset([
+    "DETECTED", "PENDING_ENTRY", "ACTIVE",
+    "TP1_HIT", "BREAKEVEN_ACTIVE",
+    "TP2_HIT", "STOPPED_BE", "STOPPED_OUT",
+    "EXPIRED", "INVALIDATED",
+])
+
+# Buffer fee untuk breakeven SL setelah TP1 (Entry + buffer ini)
+_BE_BUFFER_PCT = 0.0035   # 0.35% di atas entry = cover fee round-trip
+
+
+def create_trade_state(
+    symbol: str,
+    interval: str,
+    entry_price: float,
+    tp1_price: float,
+    tp2_price: float,
+    sl_price: float,
+    signal_score: int,
+    setup_type: str = "UNKNOWN",
+    timestamp: int = 0,
+) -> Dict[str, Any]:
+    """
+    Buat objek state trade baru dalam status DETECTED.
+
+    Args:
+        symbol:        Simbol pair (contoh: BTCUSDT)
+        interval:      Timeframe sinyal (1m, 5m, dst)
+        entry_price:   Harga entry yang direkomendasikan
+        tp1_price:     Target profit 1 (partial 50%)
+        tp2_price:     Target profit 2 (full exit)
+        sl_price:      Stop loss awal
+        signal_score:  Skor 0–100 dari scoring engine
+        setup_type:    Tipe setup (TREND_PULLBACK, BREAKOUT, dst)
+        timestamp:     Unix timestamp saat sinyal terdeteksi
+
+    Returns:
+        Dict state trade dengan semua field lifecycle
+    """
+    import time as _t
+    ts = timestamp or int(_t.time())
+
+    return {
+        "id":             f"{symbol}_{interval}_{ts}",
+        "symbol":         symbol.upper(),
+        "interval":       interval,
+        "state":          "DETECTED",
+        "setup_type":     setup_type,
+        "signal_score":   signal_score,
+
+        # Harga-harga kunci
+        "entry_price":    round(entry_price, 8),
+        "tp1_price":      round(tp1_price, 8),
+        "tp2_price":      round(tp2_price, 8),
+        "sl_price":       round(sl_price, 8),
+        "sl_initial":     round(sl_price, 8),     # SL awal — tidak berubah
+        "breakeven_sl":   round(entry_price * (1 + _BE_BUFFER_PCT), 8),
+
+        # Tracking
+        "partial_filled": False,   # True setelah TP1 hit (50% dieksekusi)
+        "pnl_partial_pct": 0.0,    # PnL % dari bagian yang sudah ditutup
+        "triggered_at":   None,    # Timestamp saat masuk ACTIVE
+        "tp1_hit_at":     None,
+        "closed_at":      None,
+        "close_reason":   None,
+
+        # TTL
+        "detected_at":    ts,
+        "ttl_interval":   interval,
+        "ttl_max_candles": _TTL_CANDLES.get(interval, 5),
+
+        # History state (untuk audit)
+        "state_history": [
+            {"state": "DETECTED", "ts": ts}
+        ],
+    }
+
+
+def advance_trade_state(
+    trade: Dict[str, Any],
+    current_price: float,
+    current_ts: int,
+    invalidation_price: Optional[float] = None,
+) -> Dict[str, Any]:
+    """
+    Evaluasi dan transisi state trade berdasarkan harga terkini.
+
+    State transitions:
+      DETECTED        → PENDING_ENTRY (jika harga < 0.15% dari entry)
+                      → EXPIRED (melewati TTL)
+                      → INVALIDATED (harga tembus invalidation sebelum entry)
+      PENDING_ENTRY   → ACTIVE (harga masuk entry zone)
+                      → EXPIRED (TTL habis)
+                      → INVALIDATED
+      ACTIVE          → TP1_HIT (harga ≥ tp1)
+                      → STOPPED_OUT (harga ≤ sl)
+      TP1_HIT         → BREAKEVEN_ACTIVE (otomatis — SL naik ke breakeven)
+      BREAKEVEN_ACTIVE→ TP2_HIT (harga ≥ tp2)
+                      → STOPPED_BE (harga ≤ breakeven_sl)
+
+    Returns:
+        Trade dict yang sudah diupdate
+    """
+    import time as _t
+    trade = dict(trade)   # shallow copy agar tidak mutasi in-place
+    state = trade["state"]
+
+    # State terminal — tidak ada transisi lagi
+    if state in ("TP2_HIT", "STOPPED_BE", "STOPPED_OUT", "EXPIRED", "INVALIDATED"):
+        return trade
+
+    def _push_state(new_state: str) -> None:
+        trade["state"] = new_state
+        trade["state_history"] = trade.get("state_history", []) + [
+            {"state": new_state, "ts": current_ts}
+        ]
+
+    entry    = trade["entry_price"]
+    tp1      = trade["tp1_price"]
+    tp2      = trade["tp2_price"]
+    sl       = trade["sl_price"]
+    be_sl    = trade["breakeven_sl"]
+    detected = trade["detected_at"]
+
+    # --- Cek TTL (berlaku untuk DETECTED dan PENDING_ENTRY) ---
+    if state in ("DETECTED", "PENDING_ENTRY"):
+        ttl = calculate_signal_ttl(
+            trade["ttl_interval"],
+            detected,
+            current_ts,
+        )
+        if ttl["is_expired"]:
+            _push_state("EXPIRED")
+            trade["closed_at"] = current_ts
+            trade["close_reason"] = "TTL_EXPIRED"
+            return trade
+
+    # --- Cek invalidation (struktur patah sebelum entry) ---
+    if invalidation_price and state in ("DETECTED", "PENDING_ENTRY"):
+        if current_price <= invalidation_price:
+            _push_state("INVALIDATED")
+            trade["closed_at"] = current_ts
+            trade["close_reason"] = "STRUCTURE_INVALIDATED"
+            return trade
+
+    # --- DETECTED → PENDING_ENTRY ---
+    if state == "DETECTED":
+        dist_pct = abs(current_price - entry) / entry * 100
+        if dist_pct <= 0.15:
+            _push_state("PENDING_ENTRY")
+        return trade
+
+    # --- PENDING_ENTRY → ACTIVE ---
+    if state == "PENDING_ENTRY":
+        if current_price >= entry * 0.9995:  # toleransi 0.05% slippage
+            _push_state("ACTIVE")
+            trade["triggered_at"] = current_ts
+        return trade
+
+    # --- ACTIVE: cek TP1 atau SL ---
+    if state == "ACTIVE":
+        if current_price >= tp1:
+            _push_state("TP1_HIT")
+            trade["tp1_hit_at"] = current_ts
+            trade["partial_filled"] = True
+            # Hitung PnL dari 50% posisi yang ditutup di TP1
+            trade["pnl_partial_pct"] = round((tp1 - entry) / entry * 100, 3)
+            # Otomatis transisi ke BREAKEVEN_ACTIVE
+            _push_state("BREAKEVEN_ACTIVE")
+            # SL dinaikkan ke breakeven (entry + buffer fee)
+            trade["sl_price"] = be_sl
+        elif current_price <= sl:
+            _push_state("STOPPED_OUT")
+            trade["closed_at"] = current_ts
+            trade["close_reason"] = "SL_HIT"
+        return trade
+
+    # --- BREAKEVEN_ACTIVE: cek TP2 atau BE stop ---
+    if state == "BREAKEVEN_ACTIVE":
+        if current_price >= tp2:
+            _push_state("TP2_HIT")
+            trade["closed_at"] = current_ts
+            trade["close_reason"] = "TP2_REACHED"
+        elif current_price <= be_sl:
+            _push_state("STOPPED_BE")
+            trade["closed_at"] = current_ts
+            trade["close_reason"] = "BREAKEVEN_STOP"
+        return trade
+
+    return trade
+
+
+def get_trade_state_label(state: str) -> str:
+    """Kembalikan label human-readable untuk ditampilkan di UI."""
+    labels = {
+        "DETECTED":          "🔍 Setup Terdeteksi",
+        "PENDING_ENTRY":     "⏳ Menunggu Entry (<0.15%)",
+        "ACTIVE":            "🟢 AKTIF – Posisi Terbuka",
+        "TP1_HIT":           "✅ TP1 Tercapai – 50% Profit",
+        "BREAKEVEN_ACTIVE":  "🔒 Breakeven Aktif – Risk-Free",
+        "TP2_HIT":           "🎯 TP2 Tercapai – Full Exit",
+        "STOPPED_BE":        "🔐 Stopped Breakeven (Risk-Free)",
+        "STOPPED_OUT":       "❌ Stop Loss Terkena",
+        "EXPIRED":           "⏰ Signal Kedaluwarsa (TTL)",
+        "INVALIDATED":       "⚠️ Struktur Invalid – Dibatalkan",
+    }
+    return labels.get(state, state)
