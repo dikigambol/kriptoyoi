@@ -544,27 +544,27 @@
     if (el.radarSignalBadge && el.radarSignalText) {
       // BUY SETUP: Bullish trend + Stoch oversold or rebounding from low zone
       if (isBull && (isStochOversold || (k !== undefined && d !== undefined && kAboveD && k < 50))) {
-        el.radarSignalBadge.className = 'radar-signal-badge buy';
+        el.radarSignalBadge.className = 'signal-main-badge buy';
         el.radarSignalText.textContent = 'BUY SETUP AKTIF (Scalp Entry)';
       }
       // TP ZONE: Overbought area, consider taking profit
       else if (isStochOverbought && !kAboveD) {
-        el.radarSignalBadge.className = 'radar-signal-badge sell';
+        el.radarSignalBadge.className = 'signal-main-badge sell';
         el.radarSignalText.textContent = 'AREA TP (Stoch Overbought Cross ↓)';
       }
       // DANGER ZONE: Bearish trend + momentum down
       else if (isBear || (e9 && price < e9 && e9 < e21)) {
-        el.radarSignalBadge.className = 'radar-signal-badge sell';
+        el.radarSignalBadge.className = 'signal-main-badge sell';
         el.radarSignalText.textContent = 'ZONA BAHAYA (Tren Bearish / Exit)';
       }
       // CAUTION: Overbought but still holding
       else if (isStochOverbought && kAboveD) {
-        el.radarSignalBadge.className = 'radar-signal-badge sell';
+        el.radarSignalBadge.className = 'signal-main-badge sell';
         el.radarSignalText.textContent = 'Jenuh Beli (Siap-siap TP)';
       }
       // Neutral / Wait
       else {
-        el.radarSignalBadge.className = 'radar-signal-badge neutral';
+        el.radarSignalBadge.className = 'signal-main-badge neutral';
         el.radarSignalText.textContent = 'TUNGGU KONFIRMASI (Wait / Neutral)';
       }
     }
@@ -895,7 +895,7 @@
 
     // Hanya override jika sinyal saat ini adalah BUY — tidak suppress warning BEARISH
     if (el.radarSignalBadge.classList.contains('buy')) {
-      el.radarSignalBadge.className = 'radar-signal-badge veto';
+      el.radarSignalBadge.className = 'signal-main-badge veto';
       el.radarSignalText.textContent = `WAIT – BTC DUMP RISK (Long DIBLOKIR)`;
     }
   }
@@ -1206,20 +1206,20 @@
       const act = data.mtf.actionable_bias;
       if (act === 'WAIT_BTC_DUMP_RISK') {
         // BTC veto aktif — override semua sinyal Long
-        el.radarSignalBadge.className = 'radar-signal-badge veto';
+        el.radarSignalBadge.className = 'signal-main-badge veto';
         const origBias = data.mtf.original_bias || '';
         el.radarSignalText.textContent = `WAIT – BTC DUMP RISK (${origBias || 'Long DIBLOKIR'})`;
       } else if (act === 'LONG_STRONG') {
-        el.radarSignalBadge.className = 'radar-signal-badge buy';
+        el.radarSignalBadge.className = 'signal-main-badge buy';
         el.radarSignalText.textContent = `STRONG LONG (MTF ${data.mtf.score_ratio})`;
       } else if (act === 'LONG_ON_PULLBACK') {
-        el.radarSignalBadge.className = 'radar-signal-badge buy';
+        el.radarSignalBadge.className = 'signal-main-badge buy';
         el.radarSignalText.textContent = `PULLBACK BUY DIP (MTF ${data.mtf.score_ratio})`;
       } else if (act === 'SHORT_OR_EXIT' || act === 'SHORT_OR_EXIT_ON_PUMP') {
-        el.radarSignalBadge.className = 'radar-signal-badge sell';
+        el.radarSignalBadge.className = 'signal-main-badge sell';
         el.radarSignalText.textContent = `BEARISH CAUTION (MTF ${data.mtf.score_ratio})`;
       } else {
-        el.radarSignalBadge.className = 'radar-signal-badge neutral';
+        el.radarSignalBadge.className = 'signal-main-badge neutral';
         el.radarSignalText.textContent = `WAIT / CHOPPY (${data.mtf.confluence_summary})`;
       }
     }
@@ -1273,7 +1273,7 @@
       if (!tp1.is_fee_viable && el.radarSignalBadge && el.radarSignalText) {
         // Hanya override jika setup sebelumnya BUY — tidak suppress BEARISH warning
         if (el.radarSignalBadge.classList.contains('buy')) {
-          el.radarSignalBadge.className = 'radar-signal-badge neutral';
+          el.radarSignalBadge.className = 'signal-main-badge neutral';
           el.radarSignalText.textContent = `NO TRADE – ${tp1.viability_status.replace(/_/g, ' ')}`;
         }
       }
@@ -2137,7 +2137,7 @@
   }
 
   function setConnectionStatus(statusClass, label) {
-    el.wsStatusPill.className = `connection-status ${statusClass}`;
+    el.wsStatusPill.className = `ws-status ${statusClass}`;
     el.wsStatusText.textContent = label;
   }
 
@@ -2349,7 +2349,7 @@
 
     if (changePct !== null && el.displayChange) {
       el.displayChange.textContent = `${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%`;
-      el.displayChange.className = `price-change-badge ${changePct >= 0 ? 'positive' : 'negative'}`;
+      el.displayChange.className = `price-change ${changePct >= 0 ? 'positive' : 'negative'}`;
     }
 
     // Also update display price if it was empty or out of date
@@ -2371,7 +2371,7 @@
         if (found.priceChangePercent !== undefined && el.displayChange) {
           const change = parseFloat(found.priceChangePercent);
           el.displayChange.textContent = `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
-          el.displayChange.className = `price-change-badge ${change >= 0 ? 'positive' : 'negative'}`;
+          el.displayChange.className = `price-change ${change >= 0 ? 'positive' : 'negative'}`;
         }
         if (found.highPrice && el.statHigh) {
           el.statHigh.textContent = formatPrice(found.highPrice, state.symbol);
@@ -2578,29 +2578,19 @@
     const base = isIdr ? state.symbol.replace(/BIDR|IDR/, '') : state.symbol.replace('USDT', '');
     const quote = isIdr ? (state.symbol.endsWith('BIDR') ? 'BIDR' : 'IDR') : 'USDT';
 
-    el.displaySymbol.textContent = `${base}/${quote}`;
-    el.displayBaseQuote.textContent = `${quote} Market`;
-
-    if (el.selectorCurrentCoin) {
-      el.selectorCurrentCoin.textContent = `${base} / ${quote}`;
-    }
-
+    // displaySymbol is hidden (legacy compat span), update selectorCurrentCoin in topbar
+    if (el.displaySymbol) el.displaySymbol.textContent = `${base}/${quote}`;
+    if (el.displayBaseQuote) el.displayBaseQuote.textContent = `${quote} Market`;
+    if (el.selectorCurrentCoin) el.selectorCurrentCoin.textContent = `${base} / ${quote}`;
     if (el.totalCoinsBadge && state.allSymbols.length > 0) {
-      el.totalCoinsBadge.textContent = `${state.allSymbols.length} Koin`;
+      el.totalCoinsBadge.textContent = `${state.allSymbols.length.toLocaleString('id-ID')}`;
     }
-
-    // Update active quick pills
-    document.querySelectorAll('.pair-pill').forEach((pill) => {
-      if (pill.dataset.symbol === state.symbol) {
-        pill.classList.add('active');
-      } else {
-        pill.classList.remove('active');
-      }
-    });
+    // Update page title
+    document.title = `${base}/${quote} — KriptoYoi`;
   }
 
   function updateIntervalUI() {
-    document.querySelectorAll('.interval-btn').forEach((btn) => {
+    document.querySelectorAll('.iv').forEach((btn) => {
       if (btn.dataset.interval === state.interval) {
         btn.classList.add('active');
       } else {
@@ -2950,7 +2940,7 @@
 
     // Intervals
     el.intervalSelector.addEventListener('click', (e) => {
-      const btn = e.target.closest('.interval-btn');
+      const btn = e.target.closest('.iv');
       if (btn && btn.dataset.interval) {
         switchInterval(btn.dataset.interval);
       }

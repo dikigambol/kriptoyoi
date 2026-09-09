@@ -1,449 +1,337 @@
 <!DOCTYPE html>
 <html lang="id">
-
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>KriptoYoi - Realtime Tokocrypto Chart</title>
-  <meta name="description"
-    content="Grafik Candlestick Real-time dari WebSocket Tokocrypto API dengan TradingView Lightweight Charts." />
-
-  <!-- Fonts -->
+  <title>KriptoYoi</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
-    rel="stylesheet">
-
-  <!-- CSS -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css" />
-
-  <!-- Lightweight Charts (Local + Fallback CDN) -->
   <script src="/static/libs/lightweight-charts.standalone.production.js"></script>
 </head>
-
 <body>
-  <div id="app" class="dashboard-container">
-    <!-- Top Navigation Header -->
-    <header class="dashboard-header">
-      <div class="brand-section">
-        <div class="brand-logo">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-            stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="22 7 13.5 15.5 8.5 10.5 2 17"></polyline>
-            <polyline points="16 7 22 7 22 13"></polyline>
-          </svg>
-          <span class="brand-name">KRIPTO<span class="accent-text">YOI</span></span>
-        </div>
-        <div class="api-badge" id="apiBadge">
-          <span class="pulse-dot"></span>
-          <span class="api-label">Tokocrypto WSS Live</span>
-        </div>
-      </div>
+<div id="app" class="dashboard-container">
 
-
-      <!-- Search & Status Actions -->
-      <div class="header-actions">
-        <button id="searchPairBtn" class="coin-selector-trigger" title="Pilih Semua Koin Tokocrypto (Tekan '/')">
-          <span class="coin-trigger-icon">🪙</span>
-          <span class="coin-trigger-text" id="selectorCurrentCoin">BTC / USDT</span>
-          <span class="coin-trigger-count" id="totalCoinsBadge">1,362 Koin</span>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-            <polyline points="6 9 12 15 18 9"></polyline>
-          </svg>
-        </button>
-
-        <!-- Connection Status Indicator -->
-        <div class="connection-status connected" id="wsStatusPill" title="Status WebSocket">
-          <span class="status-indicator"></span>
-          <span class="status-text" id="wsStatusText">Live Stream</span>
-        </div>
-      </div>
-    </header>
-
-    <!-- Full Coin Selector Modal Dialog -->
-    <div id="coinModalOverlay" class="modal-backdrop hidden">
-      <div class="modal-card" id="coinModalCard">
-        <div class="modal-header">
-          <div class="modal-title-group">
-            <span class="modal-icon">💎</span>
-            <div>
-              <h2 class="modal-title">Daftar Koin Tokocrypto</h2>
-              <p class="modal-subtitle">Pilih dari seluruh 1.300+ pasar kripto aktif</p>
-            </div>
-          </div>
-          <button id="closeModalBtn" class="modal-close-btn" title="Tutup (Esc)">✕</button>
-        </div>
-
-        <div class="modal-search-wrapper">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="11" cy="11" r="8"></circle>
-            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-          </svg>
-          <input type="text" id="pairSearchInput" placeholder="Cari koin atau token: PEPE, DOGE, SOL, ETH, BIDR..."
-            autocomplete="off" />
-          <span class="clear-search-btn hidden" id="clearSearchBtn">✕</span>
-        </div>
-
-        <!-- Filter & Sorting Toolbar -->
-        <div class="modal-toolbar">
-          <div class="market-category-tabs" id="marketCategoryTabs">
-            <button class="cat-tab active" data-category="ALL">Semua</button>
-            <button class="cat-tab" data-category="USDT">USDT</button>
-            <button class="cat-tab" data-category="IDR">BIDR / IDR</button>
-            <button class="cat-tab" data-category="USDC">USDC</button>
-            <button class="cat-tab" data-category="BTC">BTC</button>
-          </div>
-
-          <div class="modal-sort-group">
-            <span class="sort-label">Urutkan:</span>
-            <select id="modalSortSelect" class="modal-sort-select">
-              <option value="volume">Volume Terbesar</option>
-              <option value="gainers">Top Gainer (+%)</option>
-              <option value="losers">Top Loser (-%)</option>
-              <option value="name">Nama (A - Z)</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="modal-results-info">
-          <span id="modalResultCount">Menampilkan 0 koin</span>
-        </div>
-
-        <!-- Scrollable Coin List -->
-        <div class="modal-coin-list" id="pairSearchResults">
-          <!-- Dynamically filled with coin cards -->
-        </div>
+  <!-- ═══ TOP BAR ═══════════════════════════════════════════════════════ -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <span class="brand">KRIPTO<span class="brand-accent">YOI</span></span>
+      <div class="ws-status connected" id="wsStatusPill">
+        <span class="ws-dot"></span>
+        <span id="wsStatusText">Live</span>
       </div>
     </div>
 
-    <!-- Market Ribbon / Statistics Toolbar -->
-    <section class="ticker-ribbon">
-      <div class="ticker-main">
-        <div class="active-symbol-info">
-          <h1 class="symbol-display" id="displaySymbol">BTC/USDT</h1>
-          <span class="market-type-badge" id="displayBaseQuote">USDT Market</span>
-        </div>
-
-        <div class="price-block">
-          <div class="current-price" id="displayPrice">--</div>
-          <div class="price-change-badge" id="displayChange">0.00%</div>
-        </div>
+    <div class="topbar-center">
+      <button id="searchPairBtn" class="pair-selector">
+        <span id="selectorCurrentCoin">BTC / USDT</span>
+        <span id="totalCoinsBadge" class="pair-count">--</span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <div class="price-block">
+        <span class="current-price" id="displayPrice">--</span>
+        <span class="price-change" id="displayChange">0.00%</span>
       </div>
-
-      <div class="ticker-stats-grid">
-        <div class="stat-card">
-          <span class="stat-label">24h High</span>
-          <span class="stat-value" id="statHigh">--</span>
-        </div>
-        <div class="stat-card">
-          <span class="stat-label">24h Low</span>
-          <span class="stat-value" id="statLow">--</span>
-        </div>
-        <div class="stat-card">
-          <span class="stat-label">24h Volume</span>
-          <span class="stat-value" id="statVolume">--</span>
-        </div>
-        <div class="stat-card">
-          <span class="stat-label">Candle Close</span>
-          <span class="stat-value timer-text" id="candleTimer">--:--</span>
-        </div>
+      <div class="stats-row">
+        <span class="stat"><span class="stat-lbl">H</span><span id="statHigh">--</span></span>
+        <span class="stat"><span class="stat-lbl">L</span><span id="statLow">--</span></span>
+        <span class="stat"><span class="stat-lbl">Vol</span><span id="statVolume">--</span></span>
+        <span class="stat"><span class="stat-lbl">Close</span><span id="candleTimer" class="mono">--:--</span></span>
       </div>
+    </div>
 
-      <!-- Controls: Timeframe Intervals & Indicators -->
-      <div class="chart-controls">
-        <div class="interval-selector" id="intervalSelector">
-          <button class="interval-btn active" data-interval="1m">1m</button>
-          <button class="interval-btn" data-interval="3m">3m</button>
-          <button class="interval-btn" data-interval="5m">5m</button>
-          <button class="interval-btn" data-interval="15m">15m</button>
-          <button class="interval-btn" data-interval="30m">30m</button>
-          <button class="interval-btn" data-interval="1h">1h</button>
-          <button class="interval-btn" data-interval="4h">4h</button>
-          <button class="interval-btn" data-interval="1d">1d</button>
-        </div>
+    <div class="topbar-right">
+      <span class="signal-main-badge neutral" id="radarSignalBadge">
+        <span id="radarSignalText">Analyzing...</span>
+      </span>
+    </div>
+  </header>
 
-        <div class="indicator-toggles">
-          <button id="toggleEma9" class="tool-btn active" title="Toggle EMA 9 (Garis Cepat - Gold)">
-            <span class="btn-color-dot ema9-dot"></span> EMA 9
-          </button>
-          <button id="toggleEma21" class="tool-btn active" title="Toggle EMA 21 (Garis Tren - Cyan)">
-            <span class="btn-color-dot ema21-dot"></span> EMA 21
-          </button>
-          <button id="toggleEma50" class="tool-btn active" title="Toggle EMA 50 (Garis Makro - Amber)">
-            <span class="btn-color-dot ema50-dot"></span> EMA 50
-          </button>
-          <button id="toggleSrLevels" class="tool-btn active" title="Toggle Level Support & Resistance (P0)">
-            <span class="btn-color-dot sr-dot"></span> S/R Levels
-          </button>
-          <button id="toggleStoch" class="tool-btn active" title="Toggle Sub-chart Stochastic RSI (14, 14, 3, 3)">
-            <span class="btn-color-dot stoch-dot"></span> Stoch RSI
-          </button>
-          <button id="toggleSignals" class="tool-btn active" title="Toggle Marker Sinyal Buy/Sell di Candlestick">
-            <span class="btn-color-dot signal-dot-icon"></span> Sinyal Scalp
-          </button>
-          <button id="toggleZones" class="tool-btn active" title="Toggle Garis Area Buy (Demand) & Area Sell (Supply)">
-            <span class="btn-color-dot zone-dot-icon"></span> Area Beli/Jual
-          </button>
-          <button id="toggleVolume" class="tool-btn active" title="Toggle Volume Sub-chart">
-            <span class="btn-color-dot vol-dot"></span> Vol
-          </button>
-          <button id="resetViewBtn" class="tool-btn icon-only" title="Reset Tampilan / Auto Scale">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M15 3h6v6"></path>
-              <path d="M9 21H3v-6"></path>
-              <path d="M21 3l-7 7"></path>
-              <path d="M3 21l7-7"></path>
-            </svg>
-          </button>
-        </div>
-      </div>
-    </section>
+  <!-- ═══ TOOLBAR (Interval + Indicators) ═══════════════════════════════ -->
+  <div class="toolbar">
+    <div class="interval-group" id="intervalSelector">
+      <button class="iv active" data-interval="1m">1m</button>
+      <button class="iv" data-interval="3m">3m</button>
+      <button class="iv" data-interval="5m">5m</button>
+      <button class="iv" data-interval="15m">15m</button>
+      <button class="iv" data-interval="30m">30m</button>
+      <button class="iv" data-interval="1h">1h</button>
+      <button class="iv" data-interval="4h">4h</button>
+      <button class="iv" data-interval="1d">1d</button>
+    </div>
 
-    <!-- Scalper Analysis Ribbon (P0 Market Structure, MTF, S/R, ATR, RVOL) -->
-    <section class="scalper-radar-ribbon" id="scalperRadar">
-      <div class="radar-status-block">
-        <div class="radar-signal-badge neutral" id="radarSignalBadge">
-          <span class="pulse-indicator"></span>
-          <span class="signal-text" id="radarSignalText">MENGANALISIS PASAR...</span>
-        </div>
-      </div>
+    <div class="sep"></div>
 
-      <div class="radar-confluence-group">
-        <!-- Signal Score (P1) -->
-        <div class="confluence-item score-item" title="Signal Score 0–100 berdasarkan 7 komponen (Spec §14)">
-          <span class="cf-label">Signal Score</span>
-          <div class="score-display-row">
-            <span class="score-circle" id="signalScoreCircle">--</span>
-            <span class="score-label-text" id="signalScoreLabel">--</span>
-          </div>
-        </div>
+    <div class="ind-group">
+      <button id="toggleEma9"    class="ind active" title="EMA 9"><span class="dot ema9-dot"></span>E9</button>
+      <button id="toggleEma21"   class="ind active" title="EMA 21"><span class="dot ema21-dot"></span>E21</button>
+      <button id="toggleEma50"   class="ind active" title="EMA 50"><span class="dot ema50-dot"></span>E50</button>
+      <button id="toggleSrLevels" class="ind active" title="S/R Levels"><span class="dot sr-dot"></span>S/R</button>
+      <button id="toggleStoch"   class="ind active" title="Stoch RSI"><span class="dot stoch-dot"></span>Stoch</button>
+      <button id="toggleSignals" class="ind active" title="Scalp Signals"><span class="dot signal-dot-icon"></span>Sig</button>
+      <button id="toggleZones"   class="ind active" title="Demand/Supply Zones"><span class="dot zone-dot-icon"></span>Zones</button>
+      <button id="toggleVolume"  class="ind active" title="Volume"><span class="dot vol-dot"></span>Vol</button>
+    </div>
 
-        <!-- Market Regime (P1) -->
-        <div class="confluence-item regime-item" title="Market Regime: CHOP Index + ADX (Spec §9)">
-          <span class="cf-label">Market Regime</span>
-          <div class="regime-row">
-            <span class="regime-badge" id="regimeBadge">--</span>
-          </div>
-          <div class="regime-metrics-row">
-            <span class="regime-metric" id="chopBadge">CHOP: --</span>
-            <span class="regime-metric" id="adxBadge">ADX: --</span>
-          </div>
-        </div>
+    <div class="sep"></div>
 
-        <!-- MTF Confluence Matrix (P0) -->
-        <div class="confluence-item mtf-matrix-item" title="P0: Multi-Timeframe Alignment (1H, 15M, 5M, 1M)">
-          <span class="cf-label">MTF Confluence</span>
-          <div class="mtf-badges-row">
-            <span class="mtf-pill" id="mtf1h" title="1H Macro">1H: --</span>
-            <span class="mtf-pill" id="mtf15m" title="15M Structure">15M: --</span>
-            <span class="mtf-pill" id="mtf5m" title="5M Scalp">5M: --</span>
-            <span class="mtf-pill" id="mtf1m" title="1M Entry">1M: --</span>
-          </div>
-          <span class="mtf-summary-text" id="mtfSummaryText">--/4</span>
-        </div>
-
-        <!-- Market Structure & BOS/CHoCH (P0) -->
-        <div class="confluence-item structure-item" title="P0: Market Structure & BOS/CHoCH">
-          <span class="cf-label">Struktur & BOS</span>
-          <div class="structure-val-group">
-            <span class="structure-trend-badge" id="structureTrendBadge">--</span>
-            <span class="bos-choch-badge" id="bosChochBadge">--</span>
-          </div>
-        </div>
-
-        <!-- Volatility ATR & RVOL (P0) -->
-        <div class="confluence-item vol-atr-item" title="P0: Relative Volume & ATR Volatility">
-          <span class="cf-label">RVOL & ATR</span>
-          <div class="vol-atr-row">
-            <span class="rvol-badge" id="rvolBadge">RVOL: --</span>
-            <span class="atr-badge" id="atrBadge">ATR: --</span>
-          </div>
-        </div>
-
-        <!-- Live Order Flow Pressure Meter -->
-        <div class="confluence-item tape-pressure-item">
-          <span class="cf-label">Order Tape</span>
-          <div class="pressure-bar-wrapper">
-            <div class="pressure-fill-buy" id="pressureFillBuy" style="width: 50%;"></div>
-          </div>
-          <span class="pressure-text" id="pressureText">50% Beli</span>
-        </div>
-      </div>
-
-      <!-- Setup Detection Panel (P1) -->
-      <div class="radar-setups-group" id="radarSetupsGroup" style="display:none;">
-        <div class="setups-label">📋 Setup Terdeteksi:</div>
-        <div class="setups-list" id="setupsList">--</div>
-        <div class="setup-ttl-row">
-          <span class="ttl-badge" id="signalTtlBadge">TTL: --</span>
-        </div>
-      </div>
-
-      <!-- Prediksi S/R Levels (P0) & Area Beli/Jual -->
-      <div class="radar-zones-group">
-        <div class="zone-badge zone-buy-badge" id="radarBuyZoneBadge" title="Support Terdekat / Demand Area">
-          <span class="zone-label">🟢 SUP/DEMAND:</span>
-          <span class="zone-val" id="radarBuyZoneVal">--</span>
-        </div>
-        <div class="zone-badge zone-sell-badge" id="radarSellZoneBadge" title="Resistance Terdekat / Supply Area">
-          <span class="zone-label">🔴 RES/SUPPLY:</span>
-          <span class="zone-val" id="radarSellZoneVal">--</span>
-        </div>
-        <div class="zone-status-pill neutral" id="radarZoneStatusPill">
-          <span id="radarZoneStatusText">Di Antara S/R</span>
-        </div>
-        <!-- BTC Market Gatekeeper Badge -->
-        <div class="btc-gatekeeper-badge safe" id="btcGatekeeperBadge" title="BTC Market Gatekeeper – Proteksi Makro">
-          <span class="btc-gk-icon">₿</span>
-          <span id="btcGatekeeperText">BTC: Memuat...</span>
-        </div>
-      </div>
-
-      <!-- Target Estimasi TP & SL -->
-      <div class="radar-targets-group">
-        <div class="target-item target-tp">
-          <span class="target-label">TP1 (Net):</span>
-          <span class="target-val" id="radarTpVal">--</span>
-        </div>
-        <div class="target-item target-sl">
-          <span class="target-label">SL (Net):</span>
-          <span class="target-val" id="radarSlVal">--</span>
-        </div>
-        <div class="target-item target-rr">
-          <span class="target-label">Net R:R:</span>
-          <span class="target-val" id="radarNetRR">--</span>
-        </div>
-        <div class="target-item target-friction">
-          <span class="target-label">Friction:</span>
-          <span class="target-val" id="radarFriction">--</span>
-        </div>
-        <div class="net-rr-viability-badge" id="netRRViabilityBadge" style="display:none;">
-          <span id="netRRViabilityText">--</span>
-        </div>
-      </div>
-
-      <!-- Trade State Machine Panel -->
-      <div class="trade-state-panel" id="tradeStatePanel" style="display:none;">
-        <span class="trade-state-badge pending" id="tradeStateBadge">--</span>
-        <span class="trade-state-info" id="tradeStateText">--</span>
-        <button class="trade-close-btn" id="tradeCloseBtn" title="Tutup panel trade">✕</button>
-      </div>
-
-      <!-- Open Trade Button -->
-      <div class="open-trade-wrapper">
-        <button class="open-trade-btn" id="openTradeBtn" title="Buka trade dari setup yang terdeteksi">
-          📋 Buka Trade
-        </button>
-      </div>
-    </section>
-
-    <!-- Main Workspace: Chart & Side Panel -->
-    <main class="main-workspace">
-      <!-- Chart Viewport -->
-      <section class="chart-section" id="chartSection">
-        <!-- Floating Crosshair Info Overlay -->
-        <div class="chart-legend" id="chartLegend">
-          <div class="legend-row">
-            <span class="legend-pair" id="legendPair">BTCUSDT</span>
-            <span class="legend-interval" id="legendInterval">1m</span>
-            <span class="legend-time" id="legendTime">--</span>
-          </div>
-          <div class="legend-ohlc">
-            <span>O: <b id="legendOpen">--</b></span>
-            <span>H: <b id="legendHigh">--</b></span>
-            <span>L: <b id="legendLow">--</b></span>
-            <span>C: <b id="legendClose">--</b></span>
-            <span>Change: <b id="legendDiff">--</b></span>
-            <span>Vol: <b id="legendVol">--</b></span>
-          </div>
-          <div class="legend-indicators">
-            <span class="ema9-val">EMA 9: <b id="legendEma9">--</b></span>
-            <span class="ema21-val">EMA 21: <b id="legendEma21">--</b></span>
-            <span class="ema50-val">EMA 50: <b id="legendEma50">--</b></span>
-            <span class="stoch-val">Stoch %K: <b id="legendStochK">--</b> %D: <b id="legendStochD">--</b></span>
-          </div>
-        </div>
-
-        <!-- Split Chart Canvas: Main Candlestick + StochRSI Sub-chart -->
-        <div class="split-charts-container" id="splitChartsContainer">
-          <div id="chartContainer" class="chart-canvas-wrapper"></div>
-          <div id="stochRsiContainer" class="stoch-canvas-wrapper">
-            <div class="stoch-legend-badge" id="stochLegendBadge">
-              <span class="stoch-title">Stoch RSI (14, 14, 3, 3)</span>
-              <span class="stoch-time-badge" id="stochHoverTime">--:--:-- WIB</span>
-              <span style="color:#06b6d4; font-weight:700;">%K: <span id="stochKBadgeVal">--</span></span>
-              <span style="color:#f97316; font-weight:700;">%D: <span id="stochDBadgeVal">--</span></span>
-              <span style="opacity: 0.65;">OB 80 / OS 20</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Loading Overlay -->
-        <div id="chartLoading" class="chart-loading-overlay">
-          <div class="spinner"></div>
-          <p>Memuat grafik candlestick Tokocrypto...</p>
-        </div>
-      </section>
-
-      <!-- Right Side Panel: Live Trades & Watchlist -->
-      <aside class="sidebar-section">
-        <div class="sidebar-tabs">
-          <button class="tab-btn active" data-tab="tradesTab">Transaksi Realtime</button>
-          <button class="tab-btn" data-tab="watchlistTab">Top Pasar</button>
-        </div>
-
-        <!-- Live Trades Tab Content -->
-        <div class="tab-content active" id="tradesTab">
-          <div class="trade-table-header">
-            <span>Harga</span>
-            <span class="align-right">Jumlah</span>
-            <span class="align-right">Waktu</span>
-          </div>
-          <div class="trade-stream-list" id="tradesList">
-            <!-- Populated via WebSocket stream btcusdt@trade -->
-          </div>
-        </div>
-
-        <!-- Watchlist Tab Content -->
-        <div class="tab-content" id="watchlistTab">
-          <div class="watchlist-search">
-            <input type="text" id="watchlistFilterInput" placeholder="Cari koin di pasar..." />
-            <div class="watchlist-market-tags" id="watchlistMarketTags">
-              <button class="wl-tag active" data-quote="ALL">Semua</button>
-              <button class="wl-tag" data-quote="USDT">USDT</button>
-              <button class="wl-tag" data-quote="IDR">IDR</button>
-              <button class="wl-tag" data-quote="BTC">BTC</button>
-            </div>
-          </div>
-          <div class="watchlist-stream-list" id="watchlistItems">
-            <!-- Populated via API -->
-          </div>
-        </div>
-      </aside>
-    </main>
-
-    <!-- Bottom Status Bar -->
-    <footer class="dashboard-footer">
-      <div class="footer-left">
-        <span class="endpoint-tag">WebSocket Stream:</span>
-        <code class="stream-endpoint-code" id="activeStreamEndpoint">wss://stream-cloud.tokocrypto.site/stream</code>
-      </div>
-      <div class="footer-right">
-        <span class="feed-indicator">
-          <span class="pulse-live"></span>
-          Data Feed: Tokocrypto Exchange API v3
-        </span>
-        <span class="timezone-badge"
-          style="background: rgba(6, 182, 212, 0.1); color: var(--accent-cyan); padding: 2px 7px; border-radius: 4px; font-weight: 600; font-size: 0.7rem;">WIB
-          (UTC+7)</span>
-        <span class="version-tag">KriptoYoi v1.0</span>
-      </div>
-    </footer>
+    <button id="resetViewBtn" class="ind icon-only" title="Reset View">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>
+    </button>
   </div>
 
-  <!-- Main JavaScript Logic -->
-  <script src="/static/app.js"></script>
-</body>
+  <!-- ═══ ANALYSIS RIBBON ════════════════════════════════════════════════ -->
+  <div class="ribbon" id="scalperRadar">
 
+    <!-- Score -->
+    <div class="rib-block">
+      <span class="rib-lbl">Score</span>
+      <span class="score-circle no-trade" id="signalScoreCircle">--</span>
+      <span class="rib-sub" id="signalScoreLabel">--</span>
+    </div>
+
+    <!-- Regime -->
+    <div class="rib-block">
+      <span class="rib-lbl">Regime</span>
+      <span class="regime-badge range" id="regimeBadge">--</span>
+      <div class="rib-metrics">
+        <span class="rib-metric" id="chopBadge">CHOP --</span>
+        <span class="rib-metric" id="adxBadge">ADX --</span>
+      </div>
+    </div>
+
+    <div class="rib-sep"></div>
+
+    <!-- MTF -->
+    <div class="rib-block">
+      <span class="rib-lbl">MTF</span>
+      <div class="mtf-row">
+        <span class="mtf-pill" id="mtf1h">1H --</span>
+        <span class="mtf-pill" id="mtf15m">15M --</span>
+        <span class="mtf-pill" id="mtf5m">5M --</span>
+        <span class="mtf-pill" id="mtf1m">1M --</span>
+      </div>
+      <span class="rib-sub" id="mtfSummaryText">--/4</span>
+    </div>
+
+    <!-- Structure -->
+    <div class="rib-block">
+      <span class="rib-lbl">Structure</span>
+      <span class="structure-trend-badge" id="structureTrendBadge">--</span>
+      <span class="bos-choch-badge" id="bosChochBadge">--</span>
+    </div>
+
+    <!-- RVOL / ATR -->
+    <div class="rib-block">
+      <span class="rib-lbl">Vol / ATR</span>
+      <span class="rvol-badge" id="rvolBadge">RVOL --</span>
+      <span class="atr-badge" id="atrBadge">ATR --</span>
+    </div>
+
+    <!-- Order Tape -->
+    <div class="rib-block">
+      <span class="rib-lbl">Tape</span>
+      <div class="tape-bar">
+        <div class="tape-fill" id="pressureFillBuy" style="width:50%"></div>
+      </div>
+      <span class="rib-sub" id="pressureText">50% Buy</span>
+    </div>
+
+    <div class="rib-sep"></div>
+
+    <!-- S/R + BTC -->
+    <div class="rib-block">
+      <span class="rib-lbl">Support</span>
+      <span class="sr-val green" id="radarBuyZoneVal">--</span>
+    </div>
+    <div class="rib-block">
+      <span class="rib-lbl">Resist</span>
+      <span class="sr-val red" id="radarSellZoneVal">--</span>
+    </div>
+    <div class="rib-block">
+      <span class="rib-lbl">BTC</span>
+      <span class="btc-gatekeeper-badge safe" id="btcGatekeeperBadge"><span id="btcGatekeeperText">--</span></span>
+    </div>
+
+    <div class="rib-sep"></div>
+
+    <!-- TP / SL / RR -->
+    <div class="rib-block">
+      <span class="rib-lbl">TP1</span>
+      <span class="rib-val green" id="radarTpVal">--</span>
+    </div>
+    <div class="rib-block">
+      <span class="rib-lbl">SL</span>
+      <span class="rib-val red" id="radarSlVal">--</span>
+    </div>
+    <div class="rib-block">
+      <span class="rib-lbl">Net R:R</span>
+      <span class="rib-val" id="radarNetRR">--</span>
+    </div>
+    <div class="rib-block">
+      <span class="rib-lbl">Friction</span>
+      <span class="rib-val muted" id="radarFriction">--</span>
+    </div>
+
+    <!-- Viability -->
+    <div class="net-rr-viability-badge" id="netRRViabilityBadge" style="display:none;">
+      <span id="netRRViabilityText">--</span>
+    </div>
+
+    <!-- Zone status (hidden label, zone pill preserved for JS) -->
+    <div class="zone-status-pill neutral" id="radarZoneStatusPill" style="display:none;">
+      <span id="radarZoneStatusText">--</span>
+    </div>
+
+    <!-- Hidden legacy refs (kept for JS compat) -->
+    <span id="radarBuyZoneBadge"  style="display:none"></span>
+    <span id="radarSellZoneBadge" style="display:none"></span>
+    <span id="cfTrend"  style="display:none"></span>
+    <span id="cfStoch"  style="display:none"></span>
+    <span id="radarTpVal2" style="display:none"></span>
+  </div>
+
+  <!-- Setup Detection strip (visible only when setups exist) -->
+  <div class="setup-strip" id="radarSetupsGroup" style="display:none;">
+    <span class="rib-lbl">Setup</span>
+    <div id="setupsList" class="setups-list"></div>
+    <span class="ttl-badge ttl-active" id="signalTtlBadge">TTL --</span>
+    <div class="trade-state-panel" id="tradeStatePanel" style="display:none;">
+      <span class="trade-state-badge pending" id="tradeStateBadge">--</span>
+      <span class="trade-state-info" id="tradeStateText">--</span>
+      <button class="trade-close-btn" id="tradeCloseBtn">x</button>
+    </div>
+    <button class="open-trade-btn" id="openTradeBtn">Open Trade</button>
+  </div>
+
+  <!-- ═══ COIN SELECTOR MODAL ════════════════════════════════════════════ -->
+  <div id="coinModalOverlay" class="modal-backdrop hidden">
+    <div class="modal-card" id="coinModalCard">
+      <div class="modal-header">
+        <div>
+          <h2 class="modal-title">Market</h2>
+          <p class="modal-subtitle">Tokocrypto — 1,300+ pairs</p>
+        </div>
+        <button id="closeModalBtn" class="modal-close-btn">x</button>
+      </div>
+      <div class="modal-search-wrapper">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" id="pairSearchInput" placeholder="Search: BTC, SOL, ETH..." autocomplete="off" />
+        <span class="clear-search-btn hidden" id="clearSearchBtn">x</span>
+      </div>
+      <div class="modal-toolbar">
+        <div class="market-category-tabs" id="marketCategoryTabs">
+          <button class="cat-tab active" data-category="ALL">All</button>
+          <button class="cat-tab" data-category="USDT">USDT</button>
+          <button class="cat-tab" data-category="IDR">IDR</button>
+          <button class="cat-tab" data-category="USDC">USDC</button>
+          <button class="cat-tab" data-category="BTC">BTC</button>
+        </div>
+        <div class="modal-sort-group">
+          <select id="modalSortSelect" class="modal-sort-select">
+            <option value="volume">Volume</option>
+            <option value="gainers">Gainers</option>
+            <option value="losers">Losers</option>
+            <option value="name">Name</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-results-info"><span id="modalResultCount">0 pairs</span></div>
+      <div class="modal-coin-list" id="pairSearchResults"></div>
+    </div>
+  </div>
+
+  <!-- ═══ MAIN WORKSPACE ════════════════════════════════════════════════ -->
+  <main class="main-workspace">
+    <section class="chart-section" id="chartSection">
+      <!-- Chart Legend Overlay -->
+      <div class="chart-legend" id="chartLegend">
+        <div class="legend-row">
+          <span class="legend-pair" id="legendPair">BTCUSDT</span>
+          <span class="legend-interval" id="legendInterval">1m</span>
+          <span class="legend-time" id="legendTime">--</span>
+        </div>
+        <div class="legend-ohlc">
+          <span>O:<b id="legendOpen">--</b></span>
+          <span>H:<b id="legendHigh">--</b></span>
+          <span>L:<b id="legendLow">--</b></span>
+          <span>C:<b id="legendClose">--</b></span>
+          <span><b id="legendDiff">--</b></span>
+          <span>V:<b id="legendVol">--</b></span>
+        </div>
+        <div class="legend-indicators">
+          <span class="ema9-val">E9:<b id="legendEma9">--</b></span>
+          <span class="ema21-val">E21:<b id="legendEma21">--</b></span>
+          <span class="ema50-val">E50:<b id="legendEma50">--</b></span>
+          <span class="stoch-val">K:<b id="legendStochK">--</b> D:<b id="legendStochD">--</b></span>
+        </div>
+      </div>
+
+      <!-- Charts -->
+      <div class="split-charts-container" id="splitChartsContainer">
+        <div id="chartContainer" class="chart-canvas-wrapper"></div>
+        <div id="stochRsiContainer" class="stoch-canvas-wrapper">
+          <div class="stoch-legend-badge" id="stochLegendBadge">
+            <span class="stoch-title">Stoch RSI (14,14,3,3)</span>
+            <span id="stochHoverTime" class="mono">--:--</span>
+            <span style="color:#06b6d4;font-weight:700">K:<span id="stochKBadgeVal">--</span></span>
+            <span style="color:#f97316;font-weight:700">D:<span id="stochDBadgeVal">--</span></span>
+          </div>
+        </div>
+      </div>
+
+      <div id="chartLoading" class="chart-loading-overlay">
+        <div class="spinner"></div>
+        <p>Loading...</p>
+      </div>
+    </section>
+
+    <!-- Sidebar -->
+    <aside class="sidebar-section">
+      <div class="sidebar-tabs">
+        <button class="tab-btn active" data-tab="tradesTab">Trades</button>
+        <button class="tab-btn" data-tab="watchlistTab">Market</button>
+      </div>
+      <div class="tab-content active" id="tradesTab">
+        <div class="trade-table-header">
+          <span>Price</span>
+          <span class="align-right">Qty</span>
+          <span class="align-right">Time</span>
+        </div>
+        <div class="trade-stream-list" id="tradesList"></div>
+      </div>
+      <div class="tab-content" id="watchlistTab">
+        <div class="watchlist-search">
+          <input type="text" id="watchlistFilterInput" placeholder="Search market..." />
+          <div class="watchlist-market-tags" id="watchlistMarketTags">
+            <button class="wl-tag active" data-quote="ALL">All</button>
+            <button class="wl-tag" data-quote="USDT">USDT</button>
+            <button class="wl-tag" data-quote="IDR">IDR</button>
+            <button class="wl-tag" data-quote="BTC">BTC</button>
+          </div>
+        </div>
+        <div class="watchlist-stream-list" id="watchlistItems"></div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- ═══ STATUS BAR ═════════════════════════════════════════════════════ -->
+  <footer class="statusbar">
+    <code id="activeStreamEndpoint" class="stream-ep">wss://stream-cloud.tokocrypto.site</code>
+    <span class="statusbar-right">
+      <span id="displayBaseQuote" class="market-badge">USDT Market</span>
+      <span class="market-badge">WIB UTC+7</span>
+      <span class="market-badge">KriptoYoi v1.0</span>
+    </span>
+  </footer>
+
+  <!-- Hidden legacy DOM refs for JS compatibility -->
+  <span id="apiBadge" style="display:none"></span>
+  <span id="displaySymbol" style="display:none"></span>
+  <span id="quickPairs"    style="display:none"></span>
+
+</div>
+<script src="/static/app.js"></script>
+</body>
 </html>
