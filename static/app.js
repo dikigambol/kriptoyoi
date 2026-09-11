@@ -432,14 +432,163 @@
   }
 
   // --- Pure & Consistent Scalper Signal Generator (Audited & Improved) ---
-  // Acuan Perhitungan:
-  // 1. Tren EMA 9, EMA 21, & EMA 50 (Filter tren ketat)
-  // 2. Momentum Stochastic RSI (%K & %D Cross dari area jenuh yang valid)
-  // 3. Konfirmasi Reaksi Candlestick (Price Action murni)
-  // 4. Auto-CLOSE posisi lawan saat sinyal baru muncul
-  function generateScalperSignals(candles, ema9Data, ema21Data, ema50Data, stochKData, stochDData) {
+  // --- Adaptive Scalper Signal Parameters per Timeframe ---
+  // Setiap interval punya noise-level berbeda, sehingga threshold harus disesuaikan.
+  // 1m = paling noisy → parameter paling ketat
+  // 3m-5m = sweet spot scalping
+  // 15m+ = swing-scalp, parameter lebih rileks
+  function getScalperParams(interval) {
+    const p = {
+      cooldown: 6,                // Minimal jarak candle antar sinyal sejenis
+      oversoldK: 30,              // Stoch %K threshold oversold
+      oversoldLoose: 40,          // Loose oversold (fallback)
+      oversoldKCap: 50,           // K harus masih di bawah ini saat loose
+      overboughtK: 70,            // Stoch %K threshold overbought
+      overboughtLoose: 60,        // Loose overbought (fallback)
+      overboughtKFloor: 50,       // K harus masih di atas ini saat loose
+      emaBullTol: 0.999,          // Bull: e9 >= e21 * tol (0.1% toleransi)
+      emaBearTol: 1.001,          // Bear: e9 <= e21 * tol
+      ema50BullTol: 0.998,        // Harga >= EMA50 * tol
+      ema50BearTol: 1.002,        // Harga <= EMA50 * tol
+      bodyRatio: 0.20,            // Min body/range ratio candle konfirmasi
+      closeOverboughtK: 75,       // Close BUY saat K death-cross dari sini
+      closeOversoldK: 25,         // Close SELL saat K golden-cross dari sini
+      maxActiveCandles: 24,       // Max candle posisi dianggap masih aktif
+      closeCooldown: 6,           // Cooldown antar sinyal CLOSE
+      needPrevConfirm: false,     // Wajib candle sebelumnya juga searah?
+      minEmaStreak: 0,            // Min candle berturut harga di atas/bawah EMA
+      minStochGap: 0,             // Min selisih |K - D| saat cross
+      minBodySizeATR: 0,          // Min body size sebagai fraksi ATR (0 = nonaktif)
+    };
+
+    switch (interval) {
+      case '1m':
+        // ═══ 1 MENIT: PALING KETAT — anti noise, anti tergesa-gesa ═══
+        p.cooldown = 12;              // 12 menit jeda minimal antar sinyal
+        p.oversoldK = 18;             // Harus benar-benar di dasar (bukan cuma ≤30)
+        p.oversoldLoose = 28;         // Fallback juga ketat
+        p.oversoldKCap = 38;          // K masih harus rendah
+        p.overboughtK = 82;           // Harus benar-benar di puncak
+        p.overboughtLoose = 72;       // Fallback juga ketat
+        p.overboughtKFloor = 62;      // K masih harus tinggi
+        p.emaBullTol = 0.9965;        // EMA harus terpisah jelas (0.35%)
+        p.emaBearTol = 1.0035;
+        p.ema50BullTol = 0.995;       // Harus jelas di atas EMA50 (0.5%)
+        p.ema50BearTol = 1.005;
+        p.bodyRatio = 0.35;           // Body candle harus solid (35% dari range)
+        p.closeOverboughtK = 82;      // Close BUY lebih sabar
+        p.closeOversoldK = 18;        // Close SELL lebih sabar
+        p.maxActiveCandles = 35;      // 35 menit max
+        p.closeCooldown = 10;         // 10 menit jeda close
+        p.needPrevConfirm = true;     // Wajib prev candle searah
+        p.minEmaStreak = 2;           // Min 2 candle di atas/bawah EMA sebelum entry
+        p.minStochGap = 3;            // K harus cross D dengan gap minimal 3 poin
+        p.minBodySizeATR = 0.15;      // Body minimal 15% dari ATR
+        break;
+
+      case '3m':
+        // ═══ 3 MENIT: SWEET SPOT — sedikit lebih ketat dari default ═══
+        p.cooldown = 8;               // 24 menit jeda
+        p.oversoldK = 24;             // Cukup ketat
+        p.oversoldLoose = 34;
+        p.oversoldKCap = 45;
+        p.overboughtK = 76;
+        p.overboughtLoose = 66;
+        p.overboughtKFloor = 55;
+        p.emaBullTol = 0.998;
+        p.emaBearTol = 1.002;
+        p.ema50BullTol = 0.997;
+        p.ema50BearTol = 1.003;
+        p.bodyRatio = 0.28;           // 28% body ratio
+        p.closeOverboughtK = 78;
+        p.closeOversoldK = 22;
+        p.maxActiveCandles = 22;      // 66 menit max
+        p.closeCooldown = 7;
+        p.needPrevConfirm = true;     // Wajib prev candle searah
+        p.minEmaStreak = 1;           // Min 1 candle streak
+        p.minStochGap = 2;
+        p.minBodySizeATR = 0.10;
+        break;
+
+      case '5m':
+        // ═══ 5 MENIT: STANDAR SCALPING — parameter seimbang ═══
+        p.cooldown = 6;               // 30 menit jeda
+        p.oversoldK = 28;
+        p.oversoldLoose = 38;
+        p.oversoldKCap = 48;
+        p.overboughtK = 72;
+        p.overboughtLoose = 62;
+        p.overboughtKFloor = 52;
+        p.emaBullTol = 0.9985;
+        p.emaBearTol = 1.0015;
+        p.bodyRatio = 0.24;
+        p.closeOverboughtK = 76;
+        p.closeOversoldK = 24;
+        p.maxActiveCandles = 18;      // 90 menit max
+        p.closeCooldown = 5;
+        p.needPrevConfirm = false;
+        p.minEmaStreak = 1;
+        p.minStochGap = 1.5;
+        break;
+
+      case '15m':
+        // ═══ 15 MENIT: SWING-SCALP — lebih santai ═══
+        p.cooldown = 5;               // 75 menit jeda
+        p.oversoldK = 30;
+        p.oversoldLoose = 40;
+        p.oversoldKCap = 50;
+        p.overboughtK = 70;
+        p.overboughtLoose = 60;
+        p.overboughtKFloor = 50;
+        p.bodyRatio = 0.22;
+        p.maxActiveCandles = 14;      // 3.5 jam max
+        p.closeCooldown = 4;
+        break;
+
+      case '30m':
+        p.cooldown = 4;               // 2 jam jeda
+        p.bodyRatio = 0.20;
+        p.maxActiveCandles = 12;
+        p.closeCooldown = 3;
+        break;
+
+      case '1h':
+        p.cooldown = 3;               // 3 jam jeda
+        p.bodyRatio = 0.18;
+        p.maxActiveCandles = 10;
+        p.closeCooldown = 2;
+        break;
+
+      case '4h':
+        p.cooldown = 2;
+        p.bodyRatio = 0.15;
+        p.maxActiveCandles = 8;
+        p.closeCooldown = 2;
+        break;
+
+      case '1d':
+        p.cooldown = 2;
+        p.bodyRatio = 0.12;
+        p.maxActiveCandles = 6;
+        p.closeCooldown = 1;
+        break;
+    }
+    return p;
+  }
+
+  // --- Adaptive Scalper Signal Generator ---
+  // Acuan Perhitungan (per-timeframe):
+  // 1. Tren EMA 9, EMA 21, & EMA 50 (Filter tren adaptif)
+  // 2. Momentum Stochastic RSI (%K & %D Cross dari area jenuh yang valid per TF)
+  // 3. Konfirmasi Reaksi Candlestick (Body ratio adaptif + ATR filter)
+  // 4. Multi-candle confirmation (wajib di 1m-3m untuk anti-noise)
+  // 5. Auto-CLOSE posisi lawan saat sinyal baru muncul
+  function generateScalperSignals(candles, ema9Data, ema21Data, ema50Data, stochKData, stochDData, interval) {
     const markers = [];
     if (!candles || candles.length < 5) return markers;
+
+    // Ambil parameter adaptif berdasarkan interval aktif
+    const P = getScalperParams(interval || state.interval || '5m');
 
     const ema9Map = new Map((ema9Data || []).map(d => [d.time, d.value]));
     const ema21Map = new Map((ema21Data || []).map(d => [d.time, d.value]));
@@ -447,18 +596,31 @@
     const stochKMap = new Map((stochKData || []).map(d => [d.time, d.value]));
     const stochDMap = new Map((stochDData || []).map(d => [d.time, d.value]));
 
-    let lastBuyIdx = -10;
-    let lastSellIdx = -10;
-    let lastCloseIdx = -10;
-    const COOLDOWN = 6; // Minimal jarak candle antar sinyal sejenis
+    // Hitung ATR sederhana (14 periode) untuk filter body size
+    let atrValue = 0;
+    if (candles.length >= 15) {
+      let atrSum = 0;
+      for (let j = candles.length - 14; j < candles.length; j++) {
+        atrSum += candles[j].high - candles[j].low;
+      }
+      atrValue = atrSum / 14;
+    }
 
-    for (let i = 3; i < candles.length; i++) {
+    let lastBuyIdx = -100;
+    let lastSellIdx = -100;
+    let lastCloseIdx = -100;
+
+    // Mulai dari candle ke-4 (butuh lookback 3 candle untuk konfirmasi)
+    const startIdx = Math.max(3, P.minEmaStreak + 1);
+
+    for (let i = startIdx; i < candles.length; i++) {
       const c = candles[i];
       const prevC = candles[i - 1];
+      const prev2C = i >= 2 ? candles[i - 2] : null;
 
       const e9 = ema9Map.get(c.time);
       const e21 = ema21Map.get(c.time);
-      const e50 = ema50Map.get(c.time); // [Fix #6] EMA 50 sebagai filter tren besar
+      const e50 = ema50Map.get(c.time);
       const prevE9 = ema9Map.get(prevC.time);
       const prevE21 = ema21Map.get(prevC.time);
 
@@ -477,122 +639,142 @@
       const candleRange = c.high - c.low;
 
       // Cek apakah ada posisi aktif yang belum di-CLOSE
-      const hasActiveBuy = lastBuyIdx > lastCloseIdx && (i - lastBuyIdx) <= 24;
-      const hasActiveSell = lastSellIdx > lastCloseIdx && (i - lastSellIdx) <= 24;
+      const hasActiveBuy = lastBuyIdx > lastCloseIdx && (i - lastBuyIdx) <= P.maxActiveCandles;
+      const hasActiveSell = lastSellIdx > lastCloseIdx && (i - lastSellIdx) <= P.maxActiveCandles;
 
+      // ════════════════════════════════════════════════════
       // === 1. BUY SIGNAL (Scalp Long Entry) ===
-      // [Fix #1] Tren naik ketat: EMA 9 >= EMA 21 dan harga di atas EMA 9
-      // Atau: EMA 9 mendekati EMA 21 (dalam 0.1%) dan momentum EMA 9 naik
+      // ════════════════════════════════════════════════════
+
+      // Tren naik: EMA 9 >= EMA 21, harga di atas EMA 9
+      // Atau: EMA 9 mendekati EMA 21 (dalam toleransi adaptif) + momentum naik
       const isBullTrend = (e9 >= e21 && c.close >= e9)
-        || (e9 >= e21 * 0.999 && c.close >= e9 && e9 >= prevE9);
+        || (e9 >= e21 * P.emaBullTol && c.close >= e9 && e9 >= prevE9);
 
-      // [Fix #6] Filter EMA 50: harga harus di atas atau mendekati EMA 50 (jika tersedia)
-      const isAboveEma50 = !e50 || c.close >= e50 * 0.998;
+      // Filter EMA 50: harga harus di atas EMA 50 (toleransi adaptif)
+      const isAboveEma50 = !e50 || c.close >= e50 * P.ema50BullTol;
 
-      // Momentum: Stoch RSI Golden Cross dari bawah
+      // Stoch RSI Golden Cross dari oversold (threshold adaptif)
       const isStochCrossUp = prevK <= prevD && k > d;
-      // [Fix #2] Zona oversold lebih ketat: hanya dari area jenuh jual yang sesungguhnya
-      const isFromOversold = prevK <= 30 || (prevK < 40 && k < 50);
+      const isFromOversold = prevK <= P.oversoldK || (prevK < P.oversoldLoose && k < P.oversoldKCap);
 
-      // Candle reaksi hijau (body solid minimal 20% dari range)
-      const isBullishCandle = c.close > c.open && (candleRange === 0 || bodySize > candleRange * 0.2);
+      // Min gap antara K dan D saat cross (anti noise cross tipis)
+      const stochGapOk_buy = P.minStochGap <= 0 || Math.abs(k - d) >= P.minStochGap;
 
-      if (isBullTrend && isAboveEma50 && isStochCrossUp && isFromOversold && isBullishCandle && (i - lastBuyIdx) >= COOLDOWN) {
-        // [Fix #4] Auto-CLOSE posisi SELL yang masih aktif sebelum entry BUY baru
+      // Candle konfirmasi hijau (body ratio adaptif)
+      const isBullishCandle = c.close > c.open && (candleRange === 0 || bodySize > candleRange * P.bodyRatio);
+
+      // ATR body filter: body harus cukup besar relatif terhadap volatilitas
+      const bodyAtrOk_buy = P.minBodySizeATR <= 0 || atrValue <= 0 || bodySize >= atrValue * P.minBodySizeATR;
+
+      // Prev candle confirmation (wajib di 1m & 3m): candle sebelumnya juga harus hijau
+      const prevConfirmOk_buy = !P.needPrevConfirm || (prevC.close > prevC.open);
+
+      // EMA streak: harga harus sudah N candle berturut di atas EMA 9
+      let emaStreakOk_buy = true;
+      if (P.minEmaStreak > 0) {
+        for (let s = 1; s <= P.minEmaStreak && (i - s) >= 0; s++) {
+          const sc = candles[i - s];
+          const se9 = ema9Map.get(sc.time);
+          if (!se9 || sc.close < se9) { emaStreakOk_buy = false; break; }
+        }
+      }
+
+      if (isBullTrend && isAboveEma50 && isStochCrossUp && isFromOversold &&
+          stochGapOk_buy && isBullishCandle && bodyAtrOk_buy &&
+          prevConfirmOk_buy && emaStreakOk_buy &&
+          (i - lastBuyIdx) >= P.cooldown) {
+        // Auto-CLOSE posisi SELL yang masih aktif
         if (hasActiveSell) {
           markers.push({
-            time: c.time,
-            position: 'belowBar',
-            color: '#eab308',
-            shape: 'circle',
-            text: 'CLOSE',
-            size: 0.8,
+            time: c.time, position: 'belowBar', color: '#eab308',
+            shape: 'circle', text: 'CLOSE', size: 0.8,
           });
           lastCloseIdx = i;
         }
         markers.push({
-          time: c.time,
-          position: 'belowBar',
-          color: '#10b981',
-          shape: 'arrowUp',
-          text: 'BUY',
-          size: 0.8,
+          time: c.time, position: 'belowBar', color: '#10b981',
+          shape: 'arrowUp', text: 'BUY', size: 0.8,
         });
         lastBuyIdx = i;
         continue;
       }
 
+      // ════════════════════════════════════════════════════
       // === 2. SELL SIGNAL (Scalp Short Entry) ===
-      // [Fix #1] Tren turun ketat: EMA 9 <= EMA 21 dan harga di bawah EMA 9
+      // ════════════════════════════════════════════════════
+
       const isBearTrend = (e9 <= e21 && c.close <= e9)
-        || (e9 <= e21 * 1.001 && c.close <= e9 && e9 <= prevE9);
+        || (e9 <= e21 * P.emaBearTol && c.close <= e9 && e9 <= prevE9);
 
-      // [Fix #6] Filter EMA 50: harga harus di bawah atau mendekati EMA 50 (jika tersedia)
-      const isBelowEma50 = !e50 || c.close <= e50 * 1.002;
+      const isBelowEma50 = !e50 || c.close <= e50 * P.ema50BearTol;
 
-      // Momentum: Stoch RSI Death Cross dari atas
       const isStochCrossDown = prevK >= prevD && k < d;
-      // [Fix #3] Zona overbought lebih ketat: hanya dari area jenuh beli yang sesungguhnya
-      const isFromOverbought = prevK >= 70 || (prevK > 60 && k > 50);
+      const isFromOverbought = prevK >= P.overboughtK || (prevK > P.overboughtLoose && k > P.overboughtKFloor);
 
-      // Candle reaksi merah (body solid minimal 20% dari range)
-      const isBearishCandle = c.close < c.open && (candleRange === 0 || bodySize > candleRange * 0.2);
+      const stochGapOk_sell = P.minStochGap <= 0 || Math.abs(k - d) >= P.minStochGap;
 
-      if (isBearTrend && isBelowEma50 && isStochCrossDown && isFromOverbought && isBearishCandle && (i - lastSellIdx) >= COOLDOWN) {
-        // [Fix #4] Auto-CLOSE posisi BUY yang masih aktif sebelum entry SELL baru
+      const isBearishCandle = c.close < c.open && (candleRange === 0 || bodySize > candleRange * P.bodyRatio);
+
+      const bodyAtrOk_sell = P.minBodySizeATR <= 0 || atrValue <= 0 || bodySize >= atrValue * P.minBodySizeATR;
+
+      // Prev candle confirmation: candle sebelumnya juga harus merah
+      const prevConfirmOk_sell = !P.needPrevConfirm || (prevC.close < prevC.open);
+
+      // EMA streak: harga harus sudah N candle berturut di bawah EMA 9
+      let emaStreakOk_sell = true;
+      if (P.minEmaStreak > 0) {
+        for (let s = 1; s <= P.minEmaStreak && (i - s) >= 0; s++) {
+          const sc = candles[i - s];
+          const se9 = ema9Map.get(sc.time);
+          if (!se9 || sc.close > se9) { emaStreakOk_sell = false; break; }
+        }
+      }
+
+      if (isBearTrend && isBelowEma50 && isStochCrossDown && isFromOverbought &&
+          stochGapOk_sell && isBearishCandle && bodyAtrOk_sell &&
+          prevConfirmOk_sell && emaStreakOk_sell &&
+          (i - lastSellIdx) >= P.cooldown) {
+        // Auto-CLOSE posisi BUY yang masih aktif
         if (hasActiveBuy) {
           markers.push({
-            time: c.time,
-            position: 'aboveBar',
-            color: '#eab308',
-            shape: 'circle',
-            text: 'CLOSE',
-            size: 0.8,
+            time: c.time, position: 'aboveBar', color: '#eab308',
+            shape: 'circle', text: 'CLOSE', size: 0.8,
           });
           lastCloseIdx = i;
         }
         markers.push({
-          time: c.time,
-          position: 'aboveBar',
-          color: '#f43f5e',
-          shape: 'arrowDown',
-          text: 'SELL',
-          size: 0.8,
+          time: c.time, position: 'aboveBar', color: '#f43f5e',
+          shape: 'arrowDown', text: 'SELL', size: 0.8,
         });
         lastSellIdx = i;
         continue;
       }
 
-      // === 3. CLOSE SIGNAL (Take Profit / Momentum Exhaustion / Trend Break) ===
+      // ════════════════════════════════════════════════════
+      // === 3. CLOSE SIGNAL (TP / Exhaustion / Trend Break) ===
+      // ════════════════════════════════════════════════════
+
       // --- Close untuk posisi BUY aktif ---
-      const isOverboughtExit = prevK >= prevD && k < d && prevK >= 75;
-      // [Fix #5] Trend break: harga menembus ke bawah EMA 9 (tanpa syarat e9 < e21 yang redundan)
+      const isOverboughtExit = prevK >= prevD && k < d && prevK >= P.closeOverboughtK;
       const isTrendBreakSoft = c.close < e9 && prevC.close >= e9;
       const isTrendBreakHard = c.close < e21 && prevC.close >= e21;
 
       // --- Close untuk posisi SELL aktif ---
-      const isOversoldCoverExit = prevK <= prevD && k > d && prevK <= 25;
+      const isOversoldCoverExit = prevK <= prevD && k > d && prevK <= P.closeOversoldK;
       const isBearTrendBreakSoft = c.close > e9 && prevC.close <= e9;
       const isBearTrendBreakHard = c.close > e21 && prevC.close <= e21;
 
-      if (hasActiveBuy && (isOverboughtExit || isTrendBreakSoft || isTrendBreakHard) && (i - lastCloseIdx) >= COOLDOWN) {
+      if (hasActiveBuy && (isOverboughtExit || isTrendBreakSoft || isTrendBreakHard) && (i - lastCloseIdx) >= P.closeCooldown) {
         markers.push({
-          time: c.time,
-          position: 'aboveBar',
-          color: '#eab308',
-          shape: 'circle',
-          text: 'CLOSE',
-          size: 0.8,
+          time: c.time, position: 'aboveBar', color: '#eab308',
+          shape: 'circle', text: 'CLOSE', size: 0.8,
         });
         lastCloseIdx = i;
-      } else if (hasActiveSell && (isOversoldCoverExit || isBearTrendBreakSoft || isBearTrendBreakHard) && (i - lastCloseIdx) >= COOLDOWN) {
+      } else if (hasActiveSell && (isOversoldCoverExit || isBearTrendBreakSoft || isBearTrendBreakHard) && (i - lastCloseIdx) >= P.closeCooldown) {
         markers.push({
-          time: c.time,
-          position: 'belowBar',
-          color: '#eab308',
-          shape: 'circle',
-          text: 'CLOSE',
-          size: 0.8,
+          time: c.time, position: 'belowBar', color: '#eab308',
+          shape: 'circle', text: 'CLOSE', size: 0.8,
         });
         lastCloseIdx = i;
       }
@@ -2321,7 +2503,8 @@
         ema21Data,
         ema50Data,
         stochData.kData,
-        stochData.dData
+        stochData.dData,
+        state.interval
       );
       if (state.candleSeries) {
         state.candleSeries.setMarkers(state.showSignals ? state.scalperMarkers : []);
@@ -2666,7 +2849,8 @@
         ema21Data,
         ema50Data,
         stochData.kData,
-        stochData.dData
+        stochData.dData,
+        state.interval
       );
       if (state.candleSeries) {
         state.candleSeries.setMarkers(state.showSignals ? state.scalperMarkers : []);
