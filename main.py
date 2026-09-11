@@ -3,6 +3,7 @@ import time
 import asyncio
 import logging
 from typing import Optional
+from pydantic import BaseModel
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -340,21 +341,25 @@ from analyzer.p0_engine import (
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 
 
-async def send_discord_alert(message: str) -> bool:
+async def send_discord_alert(message: str = "", embed: dict | None = None, custom_url: str | None = None) -> bool:
     """
-    Kirim pesan ke Discord channel via Webhook.
-    Mengembalikan True jika berhasil, False jika gagal atau tidak dikonfigurasi.
-    Discord Webhook tidak perlu bot account — cukup URL webhook dari channel settings.
+    Kirim pesan / embed ke Discord channel via Webhook.
+    Menggunakan custom_url jika diberikan, atau fallback ke DISCORD_WEBHOOK_URL.
     """
-    if not DISCORD_WEBHOOK_URL:
+    webhook_url = (custom_url or "").strip() or os.getenv("DISCORD_WEBHOOK_URL", DISCORD_WEBHOOK_URL)
+    if not webhook_url or "discord.com/api/webhooks" not in webhook_url or "xxx/yyy" in webhook_url:
         return False
     try:
+        payload = {}
+        if message:
+            payload["content"] = message
+        if embed:
+            payload["embeds"] = [embed]
         async with httpx.AsyncClient(timeout=8.0) as client:
             resp = await client.post(
-                DISCORD_WEBHOOK_URL,
-                json={"content": message},
+                webhook_url,
+                json=payload,
             )
-            # Discord mengembalikan 204 No Content saat sukses
             return resp.status_code in (200, 204)
     except Exception as exc:
         logger.warning("Discord webhook error: %s", exc)
@@ -461,22 +466,167 @@ async def get_ticker_24h(symbol: str = Query("BTCUSDT")):
 
 
 # ---------------------------------------------------------------------------
-# Discord Test Endpoint
+# Discord Signal & Webhook Endpoints
 # ---------------------------------------------------------------------------
 
+class SignalAlertRequest(BaseModel):
+    symbol: str
+    interval: str
+    signal_type: str  # BUY, SELL, CLOSE
+    price: float
+    time: Optional[int] = None
+    rsi: Optional[float] = None
+    stoch_k: Optional[float] = None
+    stoch_d: Optional[float] = None
+    ema9: Optional[float] = None
+    ema21: Optional[float] = None
+    ema50: Optional[float] = None
+    webhook_url: Optional[str] = None
+
+
+class DiscordTestRequest(BaseModel):
+    webhook_url: Optional[str] = None
+
+
+@app.get("/api/discord/status")
+async def get_discord_status(url: Optional[str] = None):
+    """Cek apakah Discord Webhook aktif (dari parameter query atau dari .env)."""
+    webhook_url = (url or "").strip() or os.getenv("DISCORD_WEBHOOK_URL", DISCORD_WEBHOOK_URL)
+    is_configured = bool(webhook_url and "discord.com/api/webhooks" in webhook_url and "xxx/yyy" not in webhook_url)
+    return {
+        "configured": is_configured,
+        "masked_url": webhook_url[:35] + "..." if is_configured else ""
+    }
+
+
+@app.post("/api/discord/signal")
+async def post_discord_signal(req: SignalAlertRequest):
+    """Kirim notifikasi sinyal scalper secara realtime ke Discord channel user."""
+    webhook_url = (req.webhook_url or "").strip() or os.getenv("DISCORD_WEBHOOK_URL", DISCORD_WEBHOOK_URL)
+    if not webhook_url or "xxx/yyy" in webhook_url or "discord.com/api/webhooks" not in webhook_url:
+        return {"success": False, "message": "Discord Webhook URL belum diisi atau tidak valid"}
+
+    is_buy = req.signal_type == "BUY"
+    is_sell = req.signal_type == "SELL"
+
+    title_emoji = "🟢" if is_buy else ("🔴" if is_sell else "🟡")
+    color = 0x10B981 if is_buy else (0xF43F5E if is_sell else 0xEAB308)
+    action_text = "BUY (Long Entry)" if is_buy else ("SELL (Short Entry)" if is_sell else "CLOSE (Take Profit / Exit)")
+
+    fields = [
+        {"name": "🪙 Pair", "value": f"**{req.symbol}**", "inline": True},
+        {"name": "⏱️ Timeframe", "value": f"`{req.interval}`", "inline": True},
+        {"name": "💰 Harga Eksekusi", "value": f"`${req.price:,.4f}`", "inline": True},
+    ]
+
+    ind_lines = []
+    if req.rsi is not None:
+        ind_lines.append(f"• **RSI (14)**: `{req.rsi:.1f}`")
+    if req.stoch_k is not None and req.stoch_d is not None:
+        ind_lines.append(f"• **Stoch RSI**: %K `{req.stoch_k:.1f}` | %D `{req.stoch_d:.1f}`")
+    if req.ema9 is not None and req.ema21 is not None:
+        ema_rel = ">" if req.ema9 >= req.ema21 else "<"
+        ind_lines.append(f"• **EMA 9 vs 21**: `{req.ema9:,.2f}` {ema_rel} `{req.ema21:,.2f}`")
+    if req.ema50 is not None:
+        ind_lines.append(f"• **EMA 50 (Macro)**: `{req.ema50:,.2f}`")
+
+    if ind_lines:
+        fields.append({"name": "📊 Indikator Konfluensi", "value": "\n".join(ind_lines), "inline": False})
+
+    # Waktu sinyal
+    waktu_str = time.strftime("%d/%m/%Y, %H:%M:%S WIB", time.localtime())
+    embed = {
+        "title": f"{title_emoji} KriptoYoi Scalper: {req.signal_type}",
+        "description": f"Sinyal **{action_text}** terpicu pada candlestick chart secara real-time.",
+        "color": color,
+        "fields": fields,
+        "footer": {"text": f"KriptoYoi Scalper Alert • {waktu_str}"},
+    }
+
+    ok = await send_discord_alert(embed=embed, custom_url=webhook_url)
+    return {"success": ok, "message": "Terkirim ke Discord" if ok else "Gagal kirim ke Discord"}
+
+
+class RadarSetupAlertRequest(BaseModel):
+    symbol: str
+    interval: str
+    setup_name: str
+    direction: str  # LONG or SHORT
+    quality: str    # STRONG, VERY_STRONG, MODERATE
+    score: int
+    score_label: Optional[str] = None
+    entry_zone: Optional[list[float]] = None
+    conditions_met: Optional[list[str]] = None
+    price: Optional[float] = None
+    webhook_url: Optional[str] = None
+
+
+@app.post("/api/discord/radar-alert")
+async def post_discord_radar_alert(req: RadarSetupAlertRequest):
+    """Kirim notifikasi radar setup AI (sinyal yang sama dengan notifikasi bunyi chime) ke Discord."""
+    webhook_url = (req.webhook_url or "").strip() or os.getenv("DISCORD_WEBHOOK_URL", DISCORD_WEBHOOK_URL)
+    if not webhook_url or "xxx/yyy" in webhook_url or "discord.com/api/webhooks" not in webhook_url:
+        return {"success": False, "message": "Discord Webhook URL belum diisi atau tidak valid"}
+
+    is_long = req.direction.upper() == "LONG"
+    title_emoji = "🔔 🟢" if is_long else "🔔 🔴"
+    color = 0x10B981 if is_long else 0xF43F5E
+
+    fields = [
+        {"name": "🪙 Pair & TF", "value": f"**{req.symbol}** (`{req.interval}`)", "inline": True},
+        {"name": "🎯 Arah Setup", "value": f"**{'LONG (Beli)' if is_long else 'SHORT (Jual)'}**", "inline": True},
+        {"name": "📈 Skor AI", "value": f"`{req.score}/100` ({req.quality})", "inline": True},
+    ]
+
+    if req.price:
+        fields.append({"name": "💰 Harga Saat Ini", "value": f"`${req.price:,.4f}`", "inline": True})
+
+    if req.entry_zone and len(req.entry_zone) == 2:
+        fields.append({
+            "name": "🎯 Area Rekomendasi Entry",
+            "value": f"`${req.entry_zone[0]:,.4f}` - `${req.entry_zone[1]:,.4f}`",
+            "inline": True
+        })
+
+    if req.conditions_met:
+        cond_str = "\n".join([f"✅ {c}" for c in req.conditions_met])
+        fields.append({"name": "📋 Syarat Konfirmasi Terpenuhi", "value": cond_str, "inline": False})
+
+    waktu_str = time.strftime("%d/%m/%Y, %H:%M:%S WIB", time.localtime())
+    embed = {
+        "title": f"{title_emoji} Radar Setup Terdeteksi: {req.setup_name}",
+        "description": f"🔔 **Notifikasi Bunyi Radar:** Terdeteksi setup trading berkualitas tinggi (**{req.quality}**) dengan probabilitas kuat.",
+        "color": color,
+        "fields": fields,
+        "footer": {"text": f"KriptoYoi AI Radar Alert • {waktu_str}"},
+    }
+
+    ok = await send_discord_alert(embed=embed, custom_url=webhook_url)
+    return {"success": ok, "message": "Terkirim ke Discord" if ok else "Gagal kirim ke Discord"}
+
+
 @app.post("/api/discord/test")
-async def test_discord():
-    """Test koneksi Discord webhook dengan mengirim pesan singkat."""
-    if not DISCORD_WEBHOOK_URL:
+async def test_discord(req: Optional[DiscordTestRequest] = None):
+    """Test koneksi Discord webhook (menggunakan URL dari request atau dari .env)."""
+    custom_url = req.webhook_url if req else None
+    webhook_url = (custom_url or "").strip() or os.getenv("DISCORD_WEBHOOK_URL", DISCORD_WEBHOOK_URL)
+    if not webhook_url or "xxx/yyy" in webhook_url or "discord.com/api/webhooks" not in webhook_url:
         return {
             "success": False,
-            "message": "DISCORD_WEBHOOK_URL belum dikonfigurasi di .env",
+            "message": "Discord Webhook URL belum diisi atau tidak valid.",
         }
-    ok = await send_discord_alert(
-        "✅ **KriptoYoi** — Discord webhook terhubung!\n\n"
-        "Notifikasi sinyal scalping akan muncul di sini."
-    )
-    return {"success": ok, "message": "OK" if ok else "Gagal — periksa webhook URL"}
+    embed = {
+        "title": "✅ KriptoYoi Scalper — Discord Webhook Terhubung!",
+        "description": "Notifikasi sinyal scalping realtime (BUY / SELL / CLOSE) akan otomatis dikirim ke channel ini saat web dibuka.",
+        "color": 0x10B981,
+        "fields": [
+            {"name": "Status", "value": "🟢 Online & Realtime Ready", "inline": True},
+            {"name": "Sumber Sinyal", "value": "Candlestick Chart WebSocket", "inline": True},
+        ],
+        "footer": {"text": "KriptoYoi Realtime Trading Engine"},
+    }
+    ok = await send_discord_alert(embed=embed, custom_url=webhook_url)
+    return {"success": ok, "message": "OK" if ok else "Gagal - periksa apakah Webhook URL benar"}
 
 
 # Ensure static directory exists

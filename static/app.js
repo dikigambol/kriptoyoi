@@ -186,6 +186,15 @@
     toggleSignals: document.getElementById('toggleSignals'),
     toggleVolume: document.getElementById('toggleVolume'),
     resetViewBtn: document.getElementById('resetViewBtn'),
+    discordBtn: document.getElementById('discordBtn'),
+    discordBtnText: document.getElementById('discordBtnText'),
+    discordModalOverlay: document.getElementById('discordModalOverlay'),
+    closeDiscordModalBtn: document.getElementById('closeDiscordModalBtn'),
+    discordWebhookInput: document.getElementById('discordWebhookInput'),
+    discordEnableToggle: document.getElementById('discordEnableToggle'),
+    discordModalFeedback: document.getElementById('discordModalFeedback'),
+    testDiscordBtn: document.getElementById('testDiscordBtn'),
+    saveDiscordBtn: document.getElementById('saveDiscordBtn'),
   };
 
   // --- Formatters ---
@@ -439,6 +448,7 @@
   // 15m+ = swing-scalp, parameter lebih rileks
   function getScalperParams(interval) {
     const p = {
+      is1m: false,
       cooldown: 6,                // Minimal jarak candle antar sinyal sejenis
       oversoldK: 30,              // Stoch %K threshold oversold
       oversoldLoose: 40,          // Loose oversold (fallback)
@@ -446,177 +456,128 @@
       overboughtK: 70,            // Stoch %K threshold overbought
       overboughtLoose: 60,        // Loose overbought (fallback)
       overboughtKFloor: 50,       // K harus masih di atas ini saat loose
-      emaBullTol: 0.999,          // Bull: e9 >= e21 * tol (0.1% toleransi)
-      emaBearTol: 1.001,          // Bear: e9 <= e21 * tol
-      ema50BullTol: 0.998,        // Harga >= EMA50 * tol
-      ema50BearTol: 1.002,        // Harga <= EMA50 * tol
-      bodyRatio: 0.20,            // Min body/range ratio candle konfirmasi
       closeOverboughtK: 75,       // Close BUY saat K death-cross dari sini
       closeOversoldK: 25,         // Close SELL saat K golden-cross dari sini
       maxActiveCandles: 24,       // Max candle posisi dianggap masih aktif
-      closeCooldown: 6,           // Cooldown antar sinyal CLOSE
-      needPrevConfirm: false,     // Wajib candle sebelumnya juga searah?
-      minEmaStreak: 0,            // Min candle berturut harga di atas/bawah EMA
-      minStochGap: 0,             // Min selisih |K - D| saat cross
-      minBodySizeATR: 0,          // Min body size sebagai fraksi ATR (0 = nonaktif)
+      closeCooldown: 5,           // Cooldown antar sinyal CLOSE
     };
 
     switch (interval) {
       case '1m':
-        // ═══ 1 MENIT: PALING KETAT — anti noise, anti tergesa-gesa ═══
-        p.cooldown = 12;              // 12 menit jeda minimal antar sinyal
-        p.oversoldK = 18;             // Harus benar-benar di dasar (bukan cuma ≤30)
-        p.oversoldLoose = 28;         // Fallback juga ketat
-        p.oversoldKCap = 38;          // K masih harus rendah
-        p.overboughtK = 82;           // Harus benar-benar di puncak
-        p.overboughtLoose = 72;       // Fallback juga ketat
-        p.overboughtKFloor = 62;      // K masih harus tinggi
-        p.emaBullTol = 0.9965;        // EMA harus terpisah jelas (0.35%)
-        p.emaBearTol = 1.0035;
-        p.ema50BullTol = 0.995;       // Harus jelas di atas EMA50 (0.5%)
-        p.ema50BearTol = 1.005;
-        p.bodyRatio = 0.35;           // Body candle harus solid (35% dari range)
-        p.closeOverboughtK = 82;      // Close BUY lebih sabar
-        p.closeOversoldK = 18;        // Close SELL lebih sabar
-        p.maxActiveCandles = 35;      // 35 menit max
-        p.closeCooldown = 10;         // 10 menit jeda close
-        p.needPrevConfirm = true;     // Wajib prev candle searah
-        p.minEmaStreak = 2;           // Min 2 candle di atas/bawah EMA sebelum entry
-        p.minStochGap = 3;            // K harus cross D dengan gap minimal 3 poin
-        p.minBodySizeATR = 0.15;      // Body minimal 15% dari ATR
+        // ═══ 1 MENIT: DISIPLIN & SABAR (Anti-noise, Anti-tergesa-gesa) ═══
+        p.is1m = true;
+        p.cooldown = 7;           // Jeda 7 candle (7 menit) agar sabar & matang
+        p.oversoldK = 25;         // Area jenuh jual sejati
+        p.oversoldLoose = 35;
+        p.oversoldKCap = 45;
+        p.overboughtK = 75;        // Area jenuh beli sejati
+        p.overboughtLoose = 65;
+        p.overboughtKFloor = 55;
+        p.closeOverboughtK = 78;  // TP saat momentum benar-benar jenuh
+        p.closeOversoldK = 22;
+        p.maxActiveCandles = 30;  // 30 menit max posisi aktif
+        p.closeCooldown = 5;
         break;
 
       case '3m':
-        // ═══ 3 MENIT: SWEET SPOT — sedikit lebih ketat dari default ═══
-        p.cooldown = 8;               // 24 menit jeda
-        p.oversoldK = 24;             // Cukup ketat
-        p.oversoldLoose = 34;
-        p.oversoldKCap = 45;
-        p.overboughtK = 76;
-        p.overboughtLoose = 66;
-        p.overboughtKFloor = 55;
-        p.emaBullTol = 0.998;
-        p.emaBearTol = 1.002;
-        p.ema50BullTol = 0.997;
-        p.ema50BearTol = 1.003;
-        p.bodyRatio = 0.28;           // 28% body ratio
-        p.closeOverboughtK = 78;
-        p.closeOversoldK = 22;
-        p.maxActiveCandles = 22;      // 66 menit max
-        p.closeCooldown = 7;
-        p.needPrevConfirm = true;     // Wajib prev candle searah
-        p.minEmaStreak = 1;           // Min 1 candle streak
-        p.minStochGap = 2;
-        p.minBodySizeATR = 0.10;
-        break;
-
-      case '5m':
-        // ═══ 5 MENIT: STANDAR SCALPING — parameter seimbang ═══
-        p.cooldown = 6;               // 30 menit jeda
-        p.oversoldK = 28;
-        p.oversoldLoose = 38;
-        p.oversoldKCap = 48;
-        p.overboughtK = 72;
-        p.overboughtLoose = 62;
-        p.overboughtKFloor = 52;
-        p.emaBullTol = 0.9985;
-        p.emaBearTol = 1.0015;
-        p.bodyRatio = 0.24;
-        p.closeOverboughtK = 76;
-        p.closeOversoldK = 24;
-        p.maxActiveCandles = 18;      // 90 menit max
-        p.closeCooldown = 5;
-        p.needPrevConfirm = false;
-        p.minEmaStreak = 1;
-        p.minStochGap = 1.5;
-        break;
-
-      case '15m':
-        // ═══ 15 MENIT: SWING-SCALP — lebih santai ═══
-        p.cooldown = 5;               // 75 menit jeda
+        // ═══ 3 MENIT: SWEET SPOT STABIL (Formula terbukti optimal) ═══
+        p.cooldown = 6;
         p.oversoldK = 30;
         p.oversoldLoose = 40;
         p.oversoldKCap = 50;
         p.overboughtK = 70;
         p.overboughtLoose = 60;
         p.overboughtKFloor = 50;
-        p.bodyRatio = 0.22;
-        p.maxActiveCandles = 14;      // 3.5 jam max
+        p.closeOverboughtK = 75;
+        p.closeOversoldK = 25;
+        p.maxActiveCandles = 24;
+        p.closeCooldown = 5;
+        break;
+
+      case '5m':
+        // ═══ 5 MENIT: STANDAR SCALPING ═══
+        p.cooldown = 5;
+        p.oversoldK = 30;
+        p.oversoldLoose = 40;
+        p.oversoldKCap = 50;
+        p.overboughtK = 70;
+        p.overboughtLoose = 60;
+        p.overboughtKFloor = 50;
+        p.closeOverboughtK = 75;
+        p.closeOversoldK = 25;
+        p.maxActiveCandles = 20;
         p.closeCooldown = 4;
         break;
 
-      case '30m':
-        p.cooldown = 4;               // 2 jam jeda
-        p.bodyRatio = 0.20;
-        p.maxActiveCandles = 12;
+      case '15m':
+        p.cooldown = 4;
+        p.oversoldK = 30;
+        p.oversoldLoose = 42;
+        p.oversoldKCap = 52;
+        p.overboughtK = 70;
+        p.overboughtLoose = 58;
+        p.overboughtKFloor = 48;
+        p.closeOverboughtK = 75;
+        p.closeOversoldK = 25;
+        p.maxActiveCandles = 16;
         p.closeCooldown = 3;
         break;
 
+      case '30m':
       case '1h':
-        p.cooldown = 3;               // 3 jam jeda
-        p.bodyRatio = 0.18;
-        p.maxActiveCandles = 10;
-        p.closeCooldown = 2;
-        break;
-
       case '4h':
-        p.cooldown = 2;
-        p.bodyRatio = 0.15;
-        p.maxActiveCandles = 8;
-        p.closeCooldown = 2;
-        break;
-
       case '1d':
-        p.cooldown = 2;
-        p.bodyRatio = 0.12;
-        p.maxActiveCandles = 6;
-        p.closeCooldown = 1;
+        p.cooldown = 3;
+        p.oversoldK = 30;
+        p.oversoldLoose = 42;
+        p.oversoldKCap = 52;
+        p.overboughtK = 70;
+        p.overboughtLoose = 58;
+        p.overboughtKFloor = 48;
+        p.closeOverboughtK = 75;
+        p.closeOversoldK = 25;
+        p.maxActiveCandles = 12;
+        p.closeCooldown = 2;
         break;
     }
     return p;
   }
 
-  // --- Adaptive Scalper Signal Generator ---
-  // Acuan Perhitungan (per-timeframe):
-  // 1. Tren EMA 9, EMA 21, & EMA 50 (Filter tren adaptif)
-  // 2. Momentum Stochastic RSI (%K & %D Cross dari area jenuh yang valid per TF)
-  // 3. Konfirmasi Reaksi Candlestick (Body ratio adaptif + ATR filter)
-  // 4. Multi-candle confirmation (wajib di 1m-3m untuk anti-noise)
-  // 5. Auto-CLOSE posisi lawan saat sinyal baru muncul
-  function generateScalperSignals(candles, ema9Data, ema21Data, ema50Data, stochKData, stochDData, interval) {
+  // --- Pure & Consistent Scalper Signal Generator (Matang & Akurat dengan Confluence EMA 9, 21, 50, Stoch RSI & RSI 14) ---
+  // Acuan Perhitungan:
+  // 1. Perpotongan EMA (EMA 9 vs EMA 21 Golden & Death Cross) serta filter struktur EMA 50
+  // 2. Pantulan Dinamis (Pullback Bounce di EMA 21 / EMA 50) dengan konfirmasi rejection candle
+  // 3. Penembusan Momentum Harga (Price Breakout melintasi EMA 9/21)
+  // 4. Perpotongan Momentum Stochastic RSI (%K & %D) serta arah pembalikan RSI 14
+  // 5. Pembalikan Puncak (Top Reversal Breakdown dari area overbought ekstrim)
+  // 6. Exit/CLOSE Rasional (TP di area jenuh atau Trend Break tegas) & Auto-CLOSE lawan
+  function generateScalperSignals(candles, ema9Data, ema21Data, ema50Data, stochKData, stochDData, arg7, arg8) {
     const markers = [];
     if (!candles || candles.length < 5) return markers;
 
-    // Ambil parameter adaptif berdasarkan interval aktif
-    const P = getScalperParams(interval || state.interval || '5m');
+    // Normalisasi parameter rsiData dan interval (mendukung pemanggilan 7 atau 8 argumen)
+    let rsiList = Array.isArray(arg7) ? arg7 : (Array.isArray(arg8) ? arg8 : null);
+    let interval = typeof arg7 === 'string' ? arg7 : (typeof arg8 === 'string' ? arg8 : (state.interval || '5m'));
+    if (!rsiList || rsiList.length === 0) {
+      rsiList = calculateRSI(candles, 14);
+    }
+
+    const P = getScalperParams(interval);
 
     const ema9Map = new Map((ema9Data || []).map(d => [d.time, d.value]));
     const ema21Map = new Map((ema21Data || []).map(d => [d.time, d.value]));
     const ema50Map = new Map((ema50Data || []).map(d => [d.time, d.value]));
     const stochKMap = new Map((stochKData || []).map(d => [d.time, d.value]));
     const stochDMap = new Map((stochDData || []).map(d => [d.time, d.value]));
-
-    // Hitung ATR sederhana (14 periode) untuk filter body size
-    let atrValue = 0;
-    if (candles.length >= 15) {
-      let atrSum = 0;
-      for (let j = candles.length - 14; j < candles.length; j++) {
-        atrSum += candles[j].high - candles[j].low;
-      }
-      atrValue = atrSum / 14;
-    }
+    const rsiMap = new Map((rsiList || []).map(d => [d.time, d.value]));
 
     let lastBuyIdx = -100;
     let lastSellIdx = -100;
     let lastCloseIdx = -100;
 
-    // Mulai dari candle ke-4 (butuh lookback 3 candle untuk konfirmasi)
-    const startIdx = Math.max(3, P.minEmaStreak + 1);
-
-    for (let i = startIdx; i < candles.length; i++) {
+    for (let i = 3; i < candles.length; i++) {
       const c = candles[i];
       const prevC = candles[i - 1];
-      const prev2C = i >= 2 ? candles[i - 2] : null;
 
       const e9 = ema9Map.get(c.time);
       const e21 = ema21Map.get(c.time);
@@ -629,6 +590,9 @@
       const prevK = stochKMap.get(prevC.time);
       const prevD = stochDMap.get(prevC.time);
 
+      const rsi = rsiMap.get(c.time) ?? 50;
+      const prevRsi = rsiMap.get(prevC.time) ?? 50;
+
       if (!e9 || !e21 || !prevE9 || !prevE21 ||
         k === undefined || d === undefined ||
         prevK === undefined || prevD === undefined) {
@@ -637,53 +601,80 @@
 
       const bodySize = Math.abs(c.close - c.open);
       const candleRange = c.high - c.low;
+      const isGreen = c.close > c.open;
+      const isRed = c.close < c.open;
+      const lowerWick = Math.min(c.open, c.close) - c.low;
+      const upperWick = c.high - Math.max(c.open, c.close);
 
       // Cek apakah ada posisi aktif yang belum di-CLOSE
       const hasActiveBuy = lastBuyIdx > lastCloseIdx && (i - lastBuyIdx) <= P.maxActiveCandles;
       const hasActiveSell = lastSellIdx > lastCloseIdx && (i - lastSellIdx) <= P.maxActiveCandles;
 
+      // ─── 1. EVALUASI PERPOTONGAN & HUBUNGAN INDIKATOR ───
+
+      // A. Perpotongan Garis EMA
+      const emaGoldenCross = prevE9 <= prevE21 && e9 > e21; // EMA 9 potong ke atas EMA 21
+      const emaDeathCross = prevE9 >= prevE21 && e9 < e21;  // EMA 9 potong ke bawah EMA 21
+      const isBullTrendStack = e9 >= e21 && (!e50 || e21 >= e50 * 0.998); // Struktur tren dasar naik
+      const isBearTrendStack = e9 <= e21 && (!e50 || e21 <= e50 * 1.002); // Struktur tren dasar turun
+
+      // B. Perpotongan Harga terhadap EMA
+      const priceCrossAboveE9 = prevC.close <= prevE9 && c.close > e9;
+      const priceCrossAboveE21 = prevC.close <= prevE21 && c.close > e21;
+      const priceCrossBelowE9 = prevC.close >= prevE9 && c.close < e9;
+      const priceCrossBelowE21 = prevC.close >= prevE21 && c.close < e21;
+
+      // C. Perpotongan Momentum Stochastic RSI & RSI 14
+      const stochCrossUp = prevK <= prevD && k > d;
+      const stochCrossDown = prevK >= prevD && k < d;
+      const stochOversold = prevK <= P.oversoldK || (prevK < P.oversoldLoose && k < P.oversoldKCap);
+      const stochOverbought = prevK >= P.overboughtK || (prevK > P.overboughtLoose && k > P.overboughtKFloor);
+      const rsiBouncingUp = rsi > prevRsi && (rsi >= 40 || prevRsi <= 45);
+      const rsiRollingDown = rsi < prevRsi && (rsi <= 60 || prevRsi >= 55);
+
+      // D. Pola Pantulan Dinamis di Support EMA 21 / 50 (Kasus Utama Pullback: Contoh Candle Garis Putus-putus)
+      // Harga terkoreksi menguji support EMA 21 / EMA 50, lalu memantul dengan candle konfirmasi
+      const testedEma21Support = (c.low <= e21 * 1.0015 || prevC.low <= prevE21 * 1.0015) && c.close >= e21 * 0.999;
+      const candleBounceReject = isGreen || (candleRange > 0 && lowerWick >= candleRange * 0.35);
+      const isDynamicPullbackBounceBuy = (isBullTrendStack || c.close >= (e50 || e21)) &&
+        testedEma21Support && candleBounceReject &&
+        (stochCrossUp || (k > prevK && prevK <= 40)) &&
+        rsiBouncingUp;
+
+      // E. Pola Penolakan di Resistance EMA 21 / 50 (Downtrend Pullback Rejection)
+      const testedEma21Resistance = (c.high >= e21 * 0.9985 || prevC.high >= prevE21 * 0.9985) && c.close <= e21 * 1.001;
+      const candleRejectBear = isRed || (candleRange > 0 && upperWick >= candleRange * 0.35);
+      const isDynamicPullbackRejectSell = (isBearTrendStack || c.close <= (e50 || e21)) &&
+        testedEma21Resistance && candleRejectBear &&
+        (stochCrossDown || (k < prevK && prevK >= 60)) &&
+        rsiRollingDown;
+
+      // F. Pola Pembalikan Puncak (Top Reversal Breakdown / Exhaustion di Gambar User)
+      // Harga di puncak overbought lalu breakdown menembus ke bawah EMA 9
+      const isTopExhaustionSell = (prevK >= 72 || prevRsi >= 65) &&
+        (stochCrossDown || k < d) &&
+        (priceCrossBelowE9 || (c.close < e9 && isRed && bodySize >= candleRange * 0.3));
+
+      // G. Konfirmasi Candle Reaksi
+      const isBullishCandle = isGreen && (candleRange === 0 || bodySize >= candleRange * 0.20);
+      const isBearishCandle = isRed && (candleRange === 0 || bodySize >= candleRange * 0.20);
+
       // ════════════════════════════════════════════════════
       // === 1. BUY SIGNAL (Scalp Long Entry) ===
       // ════════════════════════════════════════════════════
+      // Syarat Masuk BUY:
+      // (1) Dynamic Pullback Bounce pada EMA 21/50 (seperti di candle garis putus-putus pada gambar user)
+      // (2) ATAU Perpotongan Golden Cross EMA 9/21 dengan momentum RSI/Stoch
+      // (3) ATAU Penembusan harga ke atas EMA 9/21 (Price Breakout)
+      // (4) ATAU Stoch RSI Golden Cross dari oversold saat tren bullish kuat
+      const canTriggerBuy = (i - lastBuyIdx) >= P.cooldown;
 
-      // Tren naik: EMA 9 >= EMA 21, harga di atas EMA 9
-      // Atau: EMA 9 mendekati EMA 21 (dalam toleransi adaptif) + momentum naik
-      const isBullTrend = (e9 >= e21 && c.close >= e9)
-        || (e9 >= e21 * P.emaBullTol && c.close >= e9 && e9 >= prevE9);
+      const condBuy_Bounce = isDynamicPullbackBounceBuy;
+      const condBuy_EmaCross = emaGoldenCross && c.close >= e9 && (stochCrossUp || rsi >= 48);
+      const condBuy_PriceBreak = isBullTrendStack && priceCrossAboveE9 && isBullishCandle && (stochCrossUp || rsiBouncingUp);
+      const condBuy_StochCross = isBullTrendStack && c.close >= e9 && stochCrossUp && stochOversold && isBullishCandle && rsiBouncingUp;
 
-      // Filter EMA 50: harga harus di atas EMA 50 (toleransi adaptif)
-      const isAboveEma50 = !e50 || c.close >= e50 * P.ema50BullTol;
-
-      // Stoch RSI Golden Cross dari oversold (threshold adaptif)
-      const isStochCrossUp = prevK <= prevD && k > d;
-      const isFromOversold = prevK <= P.oversoldK || (prevK < P.oversoldLoose && k < P.oversoldKCap);
-
-      // Min gap antara K dan D saat cross (anti noise cross tipis)
-      const stochGapOk_buy = P.minStochGap <= 0 || Math.abs(k - d) >= P.minStochGap;
-
-      // Candle konfirmasi hijau (body ratio adaptif)
-      const isBullishCandle = c.close > c.open && (candleRange === 0 || bodySize > candleRange * P.bodyRatio);
-
-      // ATR body filter: body harus cukup besar relatif terhadap volatilitas
-      const bodyAtrOk_buy = P.minBodySizeATR <= 0 || atrValue <= 0 || bodySize >= atrValue * P.minBodySizeATR;
-
-      // Prev candle confirmation (wajib di 1m & 3m): candle sebelumnya juga harus hijau
-      const prevConfirmOk_buy = !P.needPrevConfirm || (prevC.close > prevC.open);
-
-      // EMA streak: harga harus sudah N candle berturut di atas EMA 9
-      let emaStreakOk_buy = true;
-      if (P.minEmaStreak > 0) {
-        for (let s = 1; s <= P.minEmaStreak && (i - s) >= 0; s++) {
-          const sc = candles[i - s];
-          const se9 = ema9Map.get(sc.time);
-          if (!se9 || sc.close < se9) { emaStreakOk_buy = false; break; }
-        }
-      }
-
-      if (isBullTrend && isAboveEma50 && isStochCrossUp && isFromOversold &&
-          stochGapOk_buy && isBullishCandle && bodyAtrOk_buy &&
-          prevConfirmOk_buy && emaStreakOk_buy &&
-          (i - lastBuyIdx) >= P.cooldown) {
+      if (canTriggerBuy && (condBuy_Bounce || condBuy_EmaCross || condBuy_PriceBreak || condBuy_StochCross)) {
         // Auto-CLOSE posisi SELL yang masih aktif
         if (hasActiveSell) {
           markers.push({
@@ -703,38 +694,19 @@
       // ════════════════════════════════════════════════════
       // === 2. SELL SIGNAL (Scalp Short Entry) ===
       // ════════════════════════════════════════════════════
+      // Syarat Masuk SELL:
+      // (1) Pembalikan Puncak Overbought / Exhaustion Breakdown
+      // (2) ATAU Perpotongan Death Cross EMA 9/21
+      // (3) ATAU Penolakan di EMA 21 pada tren turun
+      // (4) ATAU Stoch RSI Death Cross dari overbought saat tren bearish kuat
+      const canTriggerSell = (i - lastSellIdx) >= P.cooldown;
 
-      const isBearTrend = (e9 <= e21 && c.close <= e9)
-        || (e9 <= e21 * P.emaBearTol && c.close <= e9 && e9 <= prevE9);
+      const condSell_TopReversal = isTopExhaustionSell;
+      const condSell_EmaCross = emaDeathCross && c.close <= e9 && (stochCrossDown || rsi <= 52);
+      const condSell_Reject = isDynamicPullbackRejectSell;
+      const condSell_StochCross = isBearTrendStack && c.close <= e9 && stochCrossDown && stochOverbought && isBearishCandle && rsiRollingDown;
 
-      const isBelowEma50 = !e50 || c.close <= e50 * P.ema50BearTol;
-
-      const isStochCrossDown = prevK >= prevD && k < d;
-      const isFromOverbought = prevK >= P.overboughtK || (prevK > P.overboughtLoose && k > P.overboughtKFloor);
-
-      const stochGapOk_sell = P.minStochGap <= 0 || Math.abs(k - d) >= P.minStochGap;
-
-      const isBearishCandle = c.close < c.open && (candleRange === 0 || bodySize > candleRange * P.bodyRatio);
-
-      const bodyAtrOk_sell = P.minBodySizeATR <= 0 || atrValue <= 0 || bodySize >= atrValue * P.minBodySizeATR;
-
-      // Prev candle confirmation: candle sebelumnya juga harus merah
-      const prevConfirmOk_sell = !P.needPrevConfirm || (prevC.close < prevC.open);
-
-      // EMA streak: harga harus sudah N candle berturut di bawah EMA 9
-      let emaStreakOk_sell = true;
-      if (P.minEmaStreak > 0) {
-        for (let s = 1; s <= P.minEmaStreak && (i - s) >= 0; s++) {
-          const sc = candles[i - s];
-          const se9 = ema9Map.get(sc.time);
-          if (!se9 || sc.close > se9) { emaStreakOk_sell = false; break; }
-        }
-      }
-
-      if (isBearTrend && isBelowEma50 && isStochCrossDown && isFromOverbought &&
-          stochGapOk_sell && isBearishCandle && bodyAtrOk_sell &&
-          prevConfirmOk_sell && emaStreakOk_sell &&
-          (i - lastSellIdx) >= P.cooldown) {
+      if (canTriggerSell && (condSell_TopReversal || condSell_EmaCross || condSell_Reject || condSell_StochCross)) {
         // Auto-CLOSE posisi BUY yang masih aktif
         if (hasActiveBuy) {
           markers.push({
@@ -752,26 +724,24 @@
       }
 
       // ════════════════════════════════════════════════════
-      // === 3. CLOSE SIGNAL (TP / Exhaustion / Trend Break) ===
+      // === 3. CLOSE SIGNAL (Take Profit & Trend Exit) ===
       // ════════════════════════════════════════════════════
 
-      // --- Close untuk posisi BUY aktif ---
-      const isOverboughtExit = prevK >= prevD && k < d && prevK >= P.closeOverboughtK;
-      const isTrendBreakSoft = c.close < e9 && prevC.close >= e9;
-      const isTrendBreakHard = c.close < e21 && prevC.close >= e21;
+      // --- Exit BUY ---
+      const isBuyTpExit = (stochCrossDown && prevK >= P.closeOverboughtK) || (rsi >= 75 && rsi < prevRsi);
+      const isBuyTrendBreak = emaDeathCross || priceCrossBelowE21 || (c.close < e21 && prevC.close < e21);
 
-      // --- Close untuk posisi SELL aktif ---
-      const isOversoldCoverExit = prevK <= prevD && k > d && prevK <= P.closeOversoldK;
-      const isBearTrendBreakSoft = c.close > e9 && prevC.close <= e9;
-      const isBearTrendBreakHard = c.close > e21 && prevC.close <= e21;
+      // --- Exit SELL ---
+      const isSellTpExit = (stochCrossUp && prevK <= P.closeOversoldK) || (rsi <= 25 && rsi > prevRsi);
+      const isSellTrendBreak = emaGoldenCross || priceCrossAboveE21 || (c.close > e21 && prevC.close > e21);
 
-      if (hasActiveBuy && (isOverboughtExit || isTrendBreakSoft || isTrendBreakHard) && (i - lastCloseIdx) >= P.closeCooldown) {
+      if (hasActiveBuy && (isBuyTpExit || isBuyTrendBreak) && (i - lastCloseIdx) >= P.closeCooldown) {
         markers.push({
           time: c.time, position: 'aboveBar', color: '#eab308',
           shape: 'circle', text: 'CLOSE', size: 0.8,
         });
         lastCloseIdx = i;
-      } else if (hasActiveSell && (isOversoldCoverExit || isBearTrendBreakSoft || isBearTrendBreakHard) && (i - lastCloseIdx) >= P.closeCooldown) {
+      } else if (hasActiveSell && (isSellTpExit || isSellTrendBreak) && (i - lastCloseIdx) >= P.closeCooldown) {
         markers.push({
           time: c.time, position: 'belowBar', color: '#eab308',
           shape: 'circle', text: 'CLOSE', size: 0.8,
@@ -1523,6 +1493,147 @@
     });
   }
 
+  // --- Discord Webhook Realtime Notifier (Per-User Storage) ---
+  let lastNotifiedDiscordKey = '';
+  async function sendDiscordSignalNotification(marker, candleTime, rsiData, ema9Data, ema21Data, ema50Data, stochData) {
+    if (!marker) return;
+
+    // Baca konfigurasi webhook independen dari localStorage browser pengguna ini
+    const isEnabled = localStorage.getItem('kriptoyoi_discord_enabled') !== 'false';
+    const userWebhook = (localStorage.getItem('kriptoyoi_discord_webhook') || '').trim();
+    if (!isEnabled || !userWebhook) return;
+
+    const key = `${state.symbol}_${state.interval}_${marker.text}_${marker.time}`;
+    if (lastNotifiedDiscordKey === key) return;
+    lastNotifiedDiscordKey = key;
+
+    const lastCandle = state.candlesCache && state.candlesCache.length > 0
+      ? state.candlesCache[state.candlesCache.length - 1]
+      : null;
+    const price = lastCandle ? lastCandle.close : state.lastPrice;
+
+    const rsiVal = rsiData && rsiData.length > 0 ? rsiData[rsiData.length - 1].value : null;
+    const kVal = stochData && stochData.kData && stochData.kData.length > 0 ? stochData.kData[stochData.kData.length - 1].value : null;
+    const dVal = stochData && stochData.dData && stochData.dData.length > 0 ? stochData.dData[stochData.dData.length - 1].value : null;
+    const e9Val = ema9Data && ema9Data.length > 0 ? ema9Data[ema9Data.length - 1].value : null;
+    const e21Val = ema21Data && ema21Data.length > 0 ? ema21Data[ema21Data.length - 1].value : null;
+    const e50Val = ema50Data && ema50Data.length > 0 ? ema50Data[ema50Data.length - 1].value : null;
+
+    try {
+      const resp = await fetch('/api/discord/signal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol: state.symbol,
+          interval: state.interval,
+          signal_type: marker.text,
+          price: price,
+          time: marker.time,
+          rsi: rsiVal,
+          stoch_k: kVal,
+          stoch_d: dVal,
+          ema9: e9Val,
+          ema21: e21Val,
+          ema50: e50Val,
+          webhook_url: userWebhook,
+        }),
+      });
+      const res = await resp.json();
+      if (res && res.success) {
+        console.log(`[Discord] Sinyal ${marker.text} ${state.symbol} (${state.interval}) terkirim ke Discord!`);
+      }
+    } catch (err) {
+      console.warn('[Discord] Gagal kirim notifikasi:', err);
+    }
+  }
+
+  // --- Notifikasi Radar Setup (Sinyal yang sama dengan notifikasi bunyi chime) ---
+  let lastRadarAlertKey = '';
+  let lastRadarAlertTime = 0;
+  async function sendDiscordRadarNotification(p0Data, setup) {
+    if (!setup || !p0Data) return;
+
+    const isEnabled = localStorage.getItem('kriptoyoi_discord_enabled') !== 'false';
+    const userWebhook = (localStorage.getItem('kriptoyoi_discord_webhook') || '').trim();
+    if (!isEnabled || !userWebhook) return;
+
+    const now = Date.now();
+    const key = `${state.symbol}_${state.interval}_${setup.type}_${setup.direction}`;
+    // Debounce 60 detik agar tidak spam setiap 12 detik polling P0
+    if (lastRadarAlertKey === key && (now - lastRadarAlertTime < 60000)) return;
+    lastRadarAlertKey = key;
+    lastRadarAlertTime = now;
+
+    const lastCandle = state.candlesCache && state.candlesCache.length > 0
+      ? state.candlesCache[state.candlesCache.length - 1]
+      : null;
+    const price = lastCandle ? lastCandle.close : state.lastPrice;
+
+    try {
+      const resp = await fetch('/api/discord/radar-alert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol: state.symbol,
+          interval: state.interval,
+          setup_name: setup.label || setup.type,
+          direction: setup.direction || 'LONG',
+          quality: setup.quality || 'STRONG',
+          score: p0Data.signal_score ? (p0Data.signal_score.score || 0) : 0,
+          score_label: p0Data.signal_score ? p0Data.signal_score.category_label : null,
+          entry_zone: setup.entry_zone || null,
+          conditions_met: setup.conditions_met || null,
+          price: price,
+          webhook_url: userWebhook,
+        }),
+      });
+      const res = await resp.json();
+      if (res && res.success) {
+        console.log(`[Discord] Radar Setup ${setup.label || setup.type} (${state.symbol}) terkirim ke Discord!`);
+      }
+    } catch (e) {
+      console.warn('[Discord] Gagal kirim radar setup ke Discord:', e);
+    }
+  }
+
+  function checkDiscordStatus() {
+    const userWebhook = (localStorage.getItem('kriptoyoi_discord_webhook') || '').trim();
+    const isEnabled = localStorage.getItem('kriptoyoi_discord_enabled') !== 'false';
+    const isConfigured = Boolean(userWebhook && userWebhook.includes('discord.com/api/webhooks'));
+
+    if (el.discordBtn) {
+      if (isConfigured && isEnabled) {
+        el.discordBtn.classList.add('active');
+        if (el.discordBtnText) el.discordBtnText.textContent = 'Discord (ON)';
+        el.discordBtn.title = 'Discord Webhook Aktif — Sinyal dikirim realtime ke Discord Anda. Klik untuk membuka pengaturan.';
+      } else if (isConfigured && !isEnabled) {
+        el.discordBtn.classList.remove('active');
+        if (el.discordBtnText) el.discordBtnText.textContent = 'Discord (Mute)';
+        el.discordBtn.title = 'Discord Webhook Terpasang tapi di-pause. Klik untuk membuka pengaturan.';
+      } else {
+        el.discordBtn.classList.remove('active');
+        if (el.discordBtnText) el.discordBtnText.textContent = 'Discord Alert';
+        el.discordBtn.title = 'Atur Discord Webhook agar menerima sinyal realtime langsung ke channel Anda.';
+      }
+    }
+  }
+
+  function openDiscordModal() {
+    if (!el.discordModalOverlay) return;
+    const savedUrl = localStorage.getItem('kriptoyoi_discord_webhook') || '';
+    const isEnabled = localStorage.getItem('kriptoyoi_discord_enabled') !== 'false';
+    if (el.discordWebhookInput) el.discordWebhookInput.value = savedUrl;
+    if (el.discordEnableToggle) el.discordEnableToggle.checked = isEnabled;
+    if (el.discordModalFeedback) el.discordModalFeedback.style.display = 'none';
+    el.discordModalOverlay.classList.remove('hidden');
+    if (el.discordWebhookInput) el.discordWebhookInput.focus();
+  }
+
+  function closeDiscordModal() {
+    if (!el.discordModalOverlay) return;
+    el.discordModalOverlay.classList.add('hidden');
+  }
+
   // ---------------------------------------------------------------------------
   // Render Score, Regime, Setups, TTL (P1)
   // ---------------------------------------------------------------------------
@@ -1830,15 +1941,22 @@
     const ttlToRender = data.signal_ttl || (window.location.search.includes('testSetups') ? { is_expired: false, candles_remaining: 3, seconds_remaining: 180, ttl_status: 'ACTIVE' } : null);
     renderSetups(setupsToRender, ttlToRender);
 
-    // 11. Audio Alert — chime saat sinyal STRONG+ dan setup terdeteksi
+    // 11. Audio Alert & Discord Alert — chime dan notifikasi saat setup STRONG+ terdeteksi
     if (data.signal_score && data.setups && data.setups.length > 0) {
       const cat = data.signal_score.category;
       const topSetup = data.setups[0];
-      const isBuySetup = topSetup && topSetup.direction === 'LONG';
-      if (cat === 'VERY_STRONG' && isBuySetup) {
-        playScalpAlert('alert');
-      } else if (cat === 'STRONG' && isBuySetup) {
-        playScalpAlert('buy');
+      const isLongSetup = topSetup && (topSetup.direction === 'LONG' || (topSetup.label && topSetup.label.toLowerCase().includes('long')));
+      const isShortSetup = topSetup && (topSetup.direction === 'SHORT' || (topSetup.label && topSetup.label.toLowerCase().includes('short')));
+
+      if (cat === 'VERY_STRONG' || cat === 'STRONG') {
+        if (isLongSetup) {
+          playScalpAlert(cat === 'VERY_STRONG' ? 'alert' : 'buy');
+        } else if (isShortSetup) {
+          playScalpAlert('warn');
+        }
+
+        // Kirim notifikasi Discord yang sama persis dengan notifikasi bunyi chime
+        sendDiscordRadarNotification(data, topSetup);
       }
     }
   }
@@ -2504,6 +2622,7 @@
         ema50Data,
         stochData.kData,
         stochData.dData,
+        rsiData,
         state.interval
       );
       if (state.candleSeries) {
@@ -2850,6 +2969,7 @@
         ema50Data,
         stochData.kData,
         stochData.dData,
+        rsiData,
         state.interval
       );
       if (state.candleSeries) {
@@ -2861,6 +2981,7 @@
         const latestM = state.scalperMarkers[state.scalperMarkers.length - 1];
         if (latestM && latestM.time === candleTime) {
           playScalpAlert(latestM.text === 'BUY' ? 'buy' : latestM.text === 'SELL' ? 'warn' : 'alert');
+          sendDiscordSignalNotification(latestM, candleTime, rsiData, ema9Data, ema21Data, ema50Data, stochData);
         }
       }
 
@@ -3637,6 +3758,116 @@
       }
     });
 
+    // Discord Webhook Modal & Controls
+    if (el.discordBtn) {
+      el.discordBtn.addEventListener('click', () => {
+        openDiscordModal();
+      });
+    }
+
+    if (el.closeDiscordModalBtn) {
+      el.closeDiscordModalBtn.addEventListener('click', () => {
+        closeDiscordModal();
+      });
+    }
+
+    if (el.discordModalOverlay) {
+      el.discordModalOverlay.addEventListener('click', (e) => {
+        if (e.target === el.discordModalOverlay) closeDiscordModal();
+      });
+    }
+
+    if (el.saveDiscordBtn) {
+      el.saveDiscordBtn.addEventListener('click', () => {
+        const url = (el.discordWebhookInput ? el.discordWebhookInput.value : '').trim();
+        const enabled = el.discordEnableToggle ? el.discordEnableToggle.checked : true;
+
+        if (url && !url.includes('discord.com/api/webhooks')) {
+          if (el.discordModalFeedback) {
+            el.discordModalFeedback.style.display = 'block';
+            el.discordModalFeedback.style.background = 'rgba(244, 63, 94, 0.15)';
+            el.discordModalFeedback.style.color = '#f43f5e';
+            el.discordModalFeedback.style.border = '1px solid rgba(244, 63, 94, 0.3)';
+            el.discordModalFeedback.textContent = '❌ Format Webhook URL tidak valid. Harus dimulai dengan https://discord.com/api/webhooks/...';
+          }
+          return;
+        }
+
+        localStorage.setItem('kriptoyoi_discord_webhook', url);
+        localStorage.setItem('kriptoyoi_discord_enabled', enabled ? 'true' : 'false');
+        checkDiscordStatus();
+
+        if (el.discordModalFeedback) {
+          el.discordModalFeedback.style.display = 'block';
+          el.discordModalFeedback.style.background = 'rgba(16, 185, 129, 0.15)';
+          el.discordModalFeedback.style.color = '#10b981';
+          el.discordModalFeedback.style.border = '1px solid rgba(16, 185, 129, 0.3)';
+          el.discordModalFeedback.textContent = url
+            ? '✅ Pengaturan Webhook berhasil disimpan di browser Anda!'
+            : 'ℹ️ Webhook dikosongkan. Notifikasi Discord dinonaktifkan.';
+        }
+
+        setTimeout(() => {
+          closeDiscordModal();
+        }, 1200);
+      });
+    }
+
+    if (el.testDiscordBtn) {
+      el.testDiscordBtn.addEventListener('click', async () => {
+        const url = (el.discordWebhookInput ? el.discordWebhookInput.value : '').trim();
+        if (!url || !url.includes('discord.com/api/webhooks')) {
+          if (el.discordModalFeedback) {
+            el.discordModalFeedback.style.display = 'block';
+            el.discordModalFeedback.style.background = 'rgba(244, 63, 94, 0.15)';
+            el.discordModalFeedback.style.color = '#f43f5e';
+            el.discordModalFeedback.style.border = '1px solid rgba(244, 63, 94, 0.3)';
+            el.discordModalFeedback.textContent = '❌ Masukkan Discord Webhook URL terlebih dahulu sebelum mengetes.';
+          }
+          return;
+        }
+
+        if (el.discordModalFeedback) {
+          el.discordModalFeedback.style.display = 'block';
+          el.discordModalFeedback.style.background = 'rgba(99, 102, 241, 0.15)';
+          el.discordModalFeedback.style.color = '#818cf8';
+          el.discordModalFeedback.style.border = '1px solid rgba(99, 102, 241, 0.3)';
+          el.discordModalFeedback.textContent = '⏳ Mengirim pesan tes ke Discord channel Anda...';
+        }
+
+        try {
+          const resp = await fetch('/api/discord/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ webhook_url: url })
+          });
+          const data = await resp.json();
+          if (data && data.success) {
+            if (el.discordModalFeedback) {
+              el.discordModalFeedback.style.background = 'rgba(16, 185, 129, 0.15)';
+              el.discordModalFeedback.style.color = '#10b981';
+              el.discordModalFeedback.style.border = '1px solid rgba(16, 185, 129, 0.3)';
+              el.discordModalFeedback.textContent = '🚀 Sukses! Pesan tes terkirim ke Discord Anda.';
+            }
+          } else {
+            if (el.discordModalFeedback) {
+              el.discordModalFeedback.style.background = 'rgba(244, 63, 94, 0.15)';
+              el.discordModalFeedback.style.color = '#f43f5e';
+              el.discordModalFeedback.style.border = '1px solid rgba(244, 63, 94, 0.3)';
+              el.discordModalFeedback.textContent = '❌ Gagal: ' + (data.message || 'Periksa apakah webhook URL benar');
+            }
+          }
+        } catch (err) {
+          if (el.discordModalFeedback) {
+            el.discordModalFeedback.style.background = 'rgba(244, 63, 94, 0.15)';
+            el.discordModalFeedback.style.color = '#f43f5e';
+            el.discordModalFeedback.style.border = '1px solid rgba(244, 63, 94, 0.3)';
+            el.discordModalFeedback.textContent = '❌ Error: ' + err.message;
+          }
+        }
+      });
+    }
+
     // Toggle Scalper Radar HUD
     if (el.toggleRadarHudBtn && el.scalperRadar) {
       const applyHudState = (collapsed) => {
@@ -3683,6 +3914,7 @@
     setupEvents();
     initChart();
     startCandleTimer();
+    checkDiscordStatus();
 
     // Parallel load
     load24hStats();
