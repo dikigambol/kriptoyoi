@@ -116,21 +116,21 @@
 
       <div class="toolbar-group indicators-group">
         <div class="ind-group">
-          <button id="toggleEma9" class="ind active" title="EMA 9 (Fast Scalp - Gold)"><span
+          <button id="toggleEma9" class="ind active" title="EMA 9 (Garis Emas): Rata-rata pergerakan 9 candle. Garis pemicu momentum untuk mendeteksi pantulan harga instan saat scalping"><span
               class="dot ema9-dot"></span>EMA 9</button>
-          <button id="toggleEma21" class="ind active" title="EMA 21 (Trend Line - Cyan)"><span
+          <button id="toggleEma21" class="ind active" title="EMA 21 (Garis Cyan): Rata-rata 21 candle. Garis batas tren utama jangka pendek. Selama harga di atas garis ini, tren cenderung Bullish"><span
               class="dot ema21-dot"></span>EMA 21</button>
-          <button id="toggleEma50" class="ind active" title="EMA 50 (Macro Trend - Ungu)"><span
+          <button id="toggleEma50" class="ind active" title="EMA 50 (Garis Ungu): Rata-rata 50 candle. Filter tren makro untuk memastikan arah trading tidak melawan arus tren besar"><span
               class="dot ema50-dot"></span>EMA 50</button>
-          <button id="toggleSrLevels" class="ind active" title="Support & Resistance Dinamis"><span
+          <button id="toggleSrLevels" class="ind active" title="Support & Resistance: Garis level penting horizontal otomatis penanda lantai pantulan beli dan atap penolakan jual"><span
               class="dot sr-dot"></span>S/R</button>
-          <button id="toggleStoch" class="ind active" title="Stochastic RSI Sub-chart"><span
+          <button id="toggleStoch" class="ind active" title="Stochastic RSI: Sub-grafik pengukur titik jenuh pasar. Angka <20 jenuh jual (peluang mantul naik), angka >80 jenuh beli (waspada turun)"><span
               class="dot stoch-dot"></span>Stoch RSI</button>
-          <button id="toggleSignals" class="ind active" title="Penanda Sinyal Scalp (Buy / Exit)"><span
+          <button id="toggleSignals" class="ind active" title="Sinyal Grafik: Menampilkan penanda panah hijau BUY, panah merah SELL, dan titik kuning CLOSE langsung di candle grafik"><span
               class="dot signal-dot-icon"></span>Signals</button>
-          <button id="toggleZones" class="ind active" title="Demand & Supply Zones"><span
+          <button id="toggleZones" class="ind active" title="Buy & Sell Zones: Blok transparan hijau (Buy Zone) dan merah (Sell Zone) yang otomatis memetakan area harga murah vs mahal"><span
               class="dot zone-dot-icon"></span>Zones</button>
-          <button id="toggleVolume" class="ind active" title="Histogram Volume"><span
+          <button id="toggleVolume" class="ind active" title="Histogram Volume: Grafik batang di bawah chart yang menunjukkan jumlah koin yang diperdagangkan pada setiap candle"><span
               class="dot vol-dot"></span>Volume</button>
         </div>
       </div>
@@ -138,7 +138,7 @@
       <div class="toolbar-spacer"></div>
 
       <div class="toolbar-group toolbar-tools">
-        <button id="resetViewBtn" class="action-btn" title="Reset View / Auto Scale Grafik">
+        <button id="resetViewBtn" class="action-btn" title="Auto Scale: Menyesuaikan tampilan grafik secara otomatis agar pergerakan candle pas di tengah layar">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
             <path d="M15 3h6v6" />
             <path d="M9 21H3v-6" />
@@ -154,53 +154,53 @@
     <div class="ribbon" id="scalperRadar">
 
       <!-- Module 1: AI Radar & Market Regime -->
-      <div class="hud-module mod-signal">
-        <div class="score-circle no-trade" id="signalScoreCircle">--</div>
+      <div class="hud-module mod-signal" title="Modul 1 (Sinyal & Rezim AI): Mengukur probabilitas kemenangan setup dan mengidentifikasi kondisi pasar (apakah sedang tren atau mendatar)">
+        <div class="score-circle no-trade" id="signalScoreCircle" title="Skor AI Probabilitas (0-100): Skor akumulasi seluruh indikator. >70 = Peluang Sangat Bagus, 50-70 = Sedang, <40 = Berisiko tinggi">--</div>
         <div class="hud-col">
           <div class="hud-row">
-            <span class="hud-tag" id="signalScoreLabel">--</span>
-            <span class="regime-badge range" id="regimeBadge">--</span>
+            <span class="hud-tag" id="signalScoreLabel" title="Label Kualitas Setup: Penilaian cepat terhadap kondisi pasar saat ini (Sangat Kuat, Bagus, Waspada, atau Tanpa Setup)">--</span>
+            <span class="regime-badge range" id="regimeBadge" title="Rezim Pasar: Status pergerakan pasar (Trending Bullish, Trending Bearish, atau Range/Sideways)">--</span>
           </div>
           <div class="hud-row sub-metrics">
-            <span class="rib-metric" id="chopBadge">CHOP --</span>
-            <span class="rib-metric" id="adxBadge">ADX --</span>
+            <span class="rib-metric" id="chopBadge" title="Choppiness Index (CHOP): >61.8 = Pasar acak/sideways tanpa arah. <38.2 = Pasar sedang melaju kencang searah tren">CHOP --</span>
+            <span class="rib-metric" id="adxBadge" title="ADX (Kekuatan Tren): >25 = Tren kuat dan bertenaga. <20 = Tren lemah atau lesu">ADX --</span>
           </div>
         </div>
       </div>
 
       <!-- Module 2: Confluence & Structure -->
-      <div class="hud-module mod-confluence">
+      <div class="hud-module mod-confluence" title="Modul 2 (Konfluensi Timeframe & Struktur): Membaca keselarasan tren 4 timeframe dan struktur ayunan harga (Price Action)">
         <div class="hud-col full-width">
-          <div class="hud-row justify-between">
+          <div class="hud-row justify-between" title="Multi-Timeframe Confluence: Keselarasan arah tren dari 1 Jam, 15 Menit, 5 Menit, dan 1 Menit. Semakin banyak yang selaras, semakin tinggi akurasi sinyal">
             <span class="hud-lbl">MTF</span>
             <div class="mtf-row">
-              <span class="mtf-pill" id="mtf1h">1H --</span>
-              <span class="mtf-pill" id="mtf15m">15M --</span>
-              <span class="mtf-pill" id="mtf5m">5M --</span>
-              <span class="mtf-pill" id="mtf1m">1M --</span>
+              <span class="mtf-pill" id="mtf1h" title="Tren 1 Jam: Arah tren jangka menengah">1H --</span>
+              <span class="mtf-pill" id="mtf15m" title="Tren 15 Menit: Arah tren swing pendek">15M --</span>
+              <span class="mtf-pill" id="mtf5m" title="Tren 5 Menit: Arah tren konfirmasi scalping">5M --</span>
+              <span class="mtf-pill" id="mtf1m" title="Tren 1 Menit: Arah tren eksekusi langsung saat ini">1M --</span>
             </div>
-            <span class="mtf-count" id="mtfSummaryText">--/4</span>
+            <span class="mtf-count" id="mtfSummaryText" title="Rasio Keselarasan Timeframe: Jumlah timeframe yang searah (misal 3/4 atau 4/4)">--/4</span>
           </div>
           <div class="hud-row sub-row">
-            <span class="cf-value" id="cfTrend">--</span>
-            <span class="structure-trend-badge" id="structureTrendBadge">--</span>
-            <span class="bos-choch-badge" id="bosChochBadge">--</span>
+            <span class="cf-value" id="cfTrend" title="Status Tren EMA: Hubungan antara EMA 9, 21, dan 50 (Bullish, Bearish, atau Konsolidasi)">--</span>
+            <span class="structure-trend-badge" id="structureTrendBadge" title="Struktur Tren (Price Action): Mendeteksi puncak dan lembah harga (Uptrend atau Downtrend)">--</span>
+            <span class="bos-choch-badge" id="bosChochBadge" title="BOS & CHoCH: Break of Structure (Tren Lanjut) atau Change of Character (Sinyal Awal Berbalik Arah)">--</span>
           </div>
         </div>
       </div>
 
       <!-- Module 3: Key Levels & S/R Zones -->
-      <div class="hud-module mod-levels">
+      <div class="hud-module mod-levels" title="Modul 3 (Area Beli, Jual & Perlindungan BTC): Memetakan zona diskon (Buy Zone), zona mahal (Sell Zone), dan satpam pelindung BTC">
         <div class="hud-col full-width">
           <div class="hud-row justify-between">
-            <span class="level-tag green">SUP <span class="sr-val mono" id="radarBuyZoneVal">--</span></span>
-            <span class="level-tag red">RES <span class="sr-val mono" id="radarSellZoneVal">--</span></span>
+            <span class="level-tag green" title="Buy Zone (Area Beli Optimal): Rentang harga diskon optimal yang didukung support kuat dan EMA dinamis">SUP <span class="sr-val mono" id="radarBuyZoneVal">--</span></span>
+            <span class="level-tag red" title="Sell Zone (Area Jual Optimal): Rentang harga mahal untuk target take profit atau mencari penolakan harga">RES <span class="sr-val mono" id="radarSellZoneVal">--</span></span>
           </div>
           <div class="hud-row sub-row justify-between">
-            <span class="zone-status-pill neutral" id="radarZoneStatusPill">
+            <span class="zone-status-pill neutral" id="radarZoneStatusPill" title="Status Posisi Harga Terkini: Memberi tahu apakah harga sekarang berada di dalam Buy Zone, Sell Zone, atau di tengah-tengah (Netral)">
               <span id="radarZoneStatusText">--</span>
             </span>
-            <span class="btc-gatekeeper-badge safe" id="btcGatekeeperBadge" title="BTC Market Gatekeeper">
+            <span class="btc-gatekeeper-badge safe" id="btcGatekeeperBadge" title="Satpam Pasar BTC (Gatekeeper): Jika Bitcoin crash/dump, sinyal beli otomatis diblokir demi keamanan modal Anda">
               <span id="btcGatekeeperText">--</span>
             </span>
           </div>
@@ -208,16 +208,16 @@
       </div>
 
       <!-- Module 4: Targets & Risk/Reward -->
-      <div class="hud-module mod-risk">
+      <div class="hud-module mod-risk" title="Modul 4 (Target Profit, Batas Risiko & Biaya): Menghitung target Take Profit (TP), Stop Loss (SL), dan rasio keuntungan bersih setelah dipotong fee">
         <div class="hud-col full-width">
           <div class="hud-row justify-between">
-            <span class="target-item green">TP: <b class="mono" id="radarTpVal">--</b></span>
-            <span class="target-item red">SL: <b class="mono" id="radarSlVal">--</b></span>
-            <span class="rr-item">R:R: <b class="mono" id="radarNetRR">--</b></span>
+            <span class="target-item green" title="Target Take Profit (TP): Estimasi target keuntungan rasional berdasarkan volatilitas harian pasar (ATR)">TP: <b class="mono" id="radarTpVal">--</b></span>
+            <span class="target-item red" title="Batas Stop Loss (SL): Batasan maksimal toleransi kerugian untuk melindungi saldo akun jika analisis meleset">SL: <b class="mono" id="radarSlVal">--</b></span>
+            <span class="rr-item" title="Net Risk-to-Reward (R:R): Perbandingan potensi laba terhadap risiko setelah memperhitungkan potongan biaya fee transaksi">R:R: <b class="mono" id="radarNetRR">--</b></span>
           </div>
           <div class="hud-row sub-row justify-between">
-            <span class="friction-val muted">Friction: <span class="mono" id="radarFriction">--</span></span>
-            <span class="net-rr-viability-badge" id="netRRViabilityBadge" style="display:none;">
+            <span class="friction-val muted" title="Friction (Biaya Transaksi): Estimasi potongan fee trading bursa dan spread harga yang harus dilewati sebelum posisi menghasilkan laba murni">Friction: <span class="mono" id="radarFriction">--</span></span>
+            <span class="net-rr-viability-badge" id="netRRViabilityBadge" style="display:none;" title="Kelayakan Risk/Reward: Mengevaluasi apakah trade ini menguntungkan dalam jangka panjang setelah menghitung biaya transaksi">
               <span id="netRRViabilityText">--</span>
             </span>
           </div>
@@ -225,18 +225,18 @@
       </div>
 
       <!-- Module 5: Order Flow & Momentum Volatility -->
-      <div class="hud-module mod-momentum">
+      <div class="hud-module mod-momentum" title="Modul 5 (Tekanan Beli/Jual & Volatilitas): Memantau dominasi aliran dana real-time, volume, dan volatilitas pasar">
         <div class="hud-col full-width">
-          <div class="hud-row justify-between">
+          <div class="hud-row justify-between" title="Pita Pesanan (Order Tape): Perbandingan volume beli agresif (Hijau) versus jual agresif (Merah) yang sedang terjadi detik ini">
             <span class="hud-lbl">Order Tape</span>
             <div class="tape-bar">
               <div class="tape-fill" id="pressureFillBuy" style="width:50%"></div>
             </div>
-            <span class="rib-sub mono" id="pressureText">50% Buy</span>
+            <span class="rib-sub mono" id="pressureText" title="Tekanan Pasar: Persentase dominasi pihak pembeli (Buy) vs penjual (Sell)">50% Buy</span>
           </div>
           <div class="hud-row sub-row justify-between">
-            <span class="rvol-badge" id="rvolBadge">RVOL --</span>
-            <span class="atr-badge" id="atrBadge">ATR --</span>
+            <span class="rvol-badge" id="rvolBadge" title="Relative Volume (RVOL): Volume saat ini dibandingkan rata-rata 20 candle. Jika >1.5x, artinya ada dana besar / paus yang masuk">RVOL --</span>
+            <span class="atr-badge" id="atrBadge" title="Average True Range (ATR): Ukuran rata-rata jarak pergerakan harga candle dalam dolar. Mengukur seberapa liar pergerakan harga saat ini">ATR --</span>
           </div>
         </div>
       </div>
@@ -256,12 +256,6 @@
       <div id="setupsList" class="setups-list"></div>
       <div class="setup-actions">
         <span class="ttl-badge ttl-active" id="signalTtlBadge">TTL --</span>
-        <div class="trade-state-panel" id="tradeStatePanel" style="display:none;">
-          <span class="trade-state-badge pending" id="tradeStateBadge">--</span>
-          <span class="trade-state-info" id="tradeStateText">--</span>
-          <button class="trade-close-btn" id="tradeCloseBtn" title="Tutup panel trade">×</button>
-        </div>
-        <button class="open-trade-btn" id="openTradeBtn">Open Trade</button>
       </div>
     </div>
 

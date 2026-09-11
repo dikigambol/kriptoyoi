@@ -68,9 +68,8 @@
     btcPulseTimer: null,
     rsiSeries: null,         // RSI(14) standalone line di stoch sub-chart
     showRsi: true,
-    activeTradeId: null,     // ID trade yang sedang dipantau state machine
-    activeTrade: null,       // Objek trade terkini dari /api/trade/update
-    tradeUpdateTimer: null,  // Interval untuk auto-update state machine
+    signalPriceLines: [],    // Garis visual Entry, TP, SL di candlestick chart
+    activeSignal: null,      // Objek trade aktif { type, entry, tp, sl, time }
     highPrice24h: null,
     lowPrice24h: null,
     openPrice24h: null,
@@ -142,12 +141,6 @@
     radarSetupsGroup: document.getElementById('radarSetupsGroup'),
     setupsList: document.getElementById('setupsList'),
     signalTtlBadge: document.getElementById('signalTtlBadge'),
-    // Trade State Machine
-    openTradeBtn: document.getElementById('openTradeBtn'),
-    tradeStatePanel: document.getElementById('tradeStatePanel'),
-    tradeStateBadge: document.getElementById('tradeStateBadge'),
-    tradeStateText: document.getElementById('tradeStateText'),
-    tradeCloseBtn: document.getElementById('tradeCloseBtn'),
     // Coin Modal Trigger & Elements
     searchPairBtn: document.getElementById('searchPairBtn'),
     selectorCurrentCoin: document.getElementById('selectorCurrentCoin'),
@@ -382,119 +375,272 @@
     return results;
   }
 
-  // --- Scalper Signal Generator (Metode 1: Trend & Momentum) ---
-  // Confluence-based: EMA Trend + Stoch RSI Momentum + Candle Body Confirmation
-  function generateScalperSignals(candles, ema9Data, ema21Data, stochKData, stochDData) {
+  // --- Signal Price Lines (Entry, TP, SL) on Candlestick Chart ---
+  function clearSignalPriceLines() {
+    if (state.candleSeries && state.signalPriceLines && state.signalPriceLines.length > 0) {
+      for (const line of state.signalPriceLines) {
+        try { state.candleSeries.removePriceLine(line); } catch (e) { }
+      }
+    }
+    state.signalPriceLines = [];
+  }
+
+  function renderSignalPriceLines(signal) {
+    clearSignalPriceLines();
+    if (!state.showSignals || !state.candleSeries || !signal) return;
+
+    const sym = state.symbol;
+    const entryP = signal.entry;
+    const tpP = signal.tp;
+    const slP = signal.sl;
+
+    const tpPct = Math.abs((tpP - entryP) / entryP * 100).toFixed(2);
+    const slPct = Math.abs((entryP - slP) / entryP * 100).toFixed(2);
+
+    // 1. Entry Line (Cyan / Blue)
+    const entryLine = state.candleSeries.createPriceLine({
+      price: entryP,
+      color: '#06b6d4',
+      lineWidth: 1.5,
+      lineStyle: LightweightCharts.LineStyle.Solid,
+      axisLabelVisible: true,
+      title: `${signal.type} ENTRY: ${formatPrice(entryP, sym)}`,
+    });
+    state.signalPriceLines.push(entryLine);
+
+    // 2. Take Profit Line (Green)
+    const tpLine = state.candleSeries.createPriceLine({
+      price: tpP,
+      color: '#10b981',
+      lineWidth: 1.5,
+      lineStyle: LightweightCharts.LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: `TP TARGET: ${formatPrice(tpP, sym)} (+${tpPct}%)`,
+    });
+    state.signalPriceLines.push(tpLine);
+
+    // 3. Stop Loss / Protection Line (Red)
+    const slLine = state.candleSeries.createPriceLine({
+      price: slP,
+      color: '#f43f5e',
+      lineWidth: 1.5,
+      lineStyle: LightweightCharts.LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: `SL BATAS: ${formatPrice(slP, sym)} (-${slPct}%)`,
+    });
+    state.signalPriceLines.push(slLine);
+  }
+
+  // --- Pure & Consistent Scalper Signal Generator (Audited & Improved) ---
+  // Acuan Perhitungan:
+  // 1. Tren EMA 9, EMA 21, & EMA 50 (Filter tren ketat)
+  // 2. Momentum Stochastic RSI (%K & %D Cross dari area jenuh yang valid)
+  // 3. Konfirmasi Reaksi Candlestick (Price Action murni)
+  // 4. Auto-CLOSE posisi lawan saat sinyal baru muncul
+  function generateScalperSignals(candles, ema9Data, ema21Data, ema50Data, stochKData, stochDData) {
     const markers = [];
     if (!candles || candles.length < 5) return markers;
 
-    const ema9Map = new Map(ema9Data.map(d => [d.time, d.value]));
-    const ema21Map = new Map(ema21Data.map(d => [d.time, d.value]));
-    const stochKMap = new Map(stochKData.map(d => [d.time, d.value]));
-    const stochDMap = new Map(stochDData.map(d => [d.time, d.value]));
+    const ema9Map = new Map((ema9Data || []).map(d => [d.time, d.value]));
+    const ema21Map = new Map((ema21Data || []).map(d => [d.time, d.value]));
+    const ema50Map = new Map((ema50Data || []).map(d => [d.time, d.value]));
+    const stochKMap = new Map((stochKData || []).map(d => [d.time, d.value]));
+    const stochDMap = new Map((stochDData || []).map(d => [d.time, d.value]));
 
-    let lastBuyIdx = -10;   // Index of last BUY signal (for cooldown)
-    let lastSellIdx = -10;  // Index of last SELL signal (for cooldown)
-    const COOLDOWN = 6;     // Min candles between same-type signals to prevent clutter
+    let lastBuyIdx = -10;
+    let lastSellIdx = -10;
+    let lastCloseIdx = -10;
+    const COOLDOWN = 6; // Minimal jarak candle antar sinyal sejenis
 
     for (let i = 3; i < candles.length; i++) {
       const c = candles[i];
       const prevC = candles[i - 1];
-      const prevC2 = candles[i - 2];
+
       const e9 = ema9Map.get(c.time);
       const e21 = ema21Map.get(c.time);
+      const e50 = ema50Map.get(c.time); // [Fix #6] EMA 50 sebagai filter tren besar
       const prevE9 = ema9Map.get(prevC.time);
       const prevE21 = ema21Map.get(prevC.time);
+
       const k = stochKMap.get(c.time);
       const d = stochDMap.get(c.time);
       const prevK = stochKMap.get(prevC.time);
       const prevD = stochDMap.get(prevC.time);
-      const prevK2 = stochKMap.get(prevC2.time);
-      const prevD2 = stochDMap.get(prevC2.time);
 
       if (!e9 || !e21 || !prevE9 || !prevE21 ||
         k === undefined || d === undefined ||
-        prevK === undefined || prevD === undefined ||
-        prevK2 === undefined || prevD2 === undefined) {
+        prevK === undefined || prevD === undefined) {
         continue;
       }
 
-      // === BUY SIGNAL (Scalp Entry) ===
-      const isBullTrend = e9 >= e21 && c.close >= e9;
-      const isStochCrossUp = prevK <= prevD && k > d;
-      const isFromOversold = prevK <= 30 || (prevK < 45 && k < 55);
-
       const bodySize = Math.abs(c.close - c.open);
       const candleRange = c.high - c.low;
-      const isBullishCandle = c.close > c.open && bodySize > candleRange * 0.2;
 
-      if (isBullTrend && isStochCrossUp && isFromOversold && isBullishCandle && (i - lastBuyIdx) >= COOLDOWN) {
+      // Cek apakah ada posisi aktif yang belum di-CLOSE
+      const hasActiveBuy = lastBuyIdx > lastCloseIdx && (i - lastBuyIdx) <= 24;
+      const hasActiveSell = lastSellIdx > lastCloseIdx && (i - lastSellIdx) <= 24;
+
+      // === 1. BUY SIGNAL (Scalp Long Entry) ===
+      // [Fix #1] Tren naik ketat: EMA 9 >= EMA 21 dan harga di atas EMA 9
+      // Atau: EMA 9 mendekati EMA 21 (dalam 0.1%) dan momentum EMA 9 naik
+      const isBullTrend = (e9 >= e21 && c.close >= e9)
+        || (e9 >= e21 * 0.999 && c.close >= e9 && e9 >= prevE9);
+
+      // [Fix #6] Filter EMA 50: harga harus di atas atau mendekati EMA 50 (jika tersedia)
+      const isAboveEma50 = !e50 || c.close >= e50 * 0.998;
+
+      // Momentum: Stoch RSI Golden Cross dari bawah
+      const isStochCrossUp = prevK <= prevD && k > d;
+      // [Fix #2] Zona oversold lebih ketat: hanya dari area jenuh jual yang sesungguhnya
+      const isFromOversold = prevK <= 30 || (prevK < 40 && k < 50);
+
+      // Candle reaksi hijau (body solid minimal 20% dari range)
+      const isBullishCandle = c.close > c.open && (candleRange === 0 || bodySize > candleRange * 0.2);
+
+      if (isBullTrend && isAboveEma50 && isStochCrossUp && isFromOversold && isBullishCandle && (i - lastBuyIdx) >= COOLDOWN) {
+        // [Fix #4] Auto-CLOSE posisi SELL yang masih aktif sebelum entry BUY baru
+        if (hasActiveSell) {
+          markers.push({
+            time: c.time,
+            position: 'belowBar',
+            color: '#eab308',
+            shape: 'circle',
+            text: 'CLOSE',
+            size: 0.8,
+          });
+          lastCloseIdx = i;
+        }
         markers.push({
           time: c.time,
           position: 'belowBar',
           color: '#10b981',
           shape: 'arrowUp',
           text: 'BUY',
-          size: 1.0,
+          size: 0.8,
         });
         lastBuyIdx = i;
         continue;
       }
 
-      // === SELL / EXIT / TP SIGNAL ===
-      const isStochOverboughtCross = prevK >= prevD && k < d && prevK >= 75;
-      const isBearishCandle = c.close < c.open;
-      const isTrendBreakSoft = c.close < e9 && prevC.close >= e9 && e9 < e21;
-      const isTrendBreakHard = c.close < e21 && prevC.close >= e21;
+      // === 2. SELL SIGNAL (Scalp Short Entry) ===
+      // [Fix #1] Tren turun ketat: EMA 9 <= EMA 21 dan harga di bawah EMA 9
+      const isBearTrend = (e9 <= e21 && c.close <= e9)
+        || (e9 <= e21 * 1.001 && c.close <= e9 && e9 <= prevE9);
 
-      if (isStochOverboughtCross && (i - lastSellIdx) >= COOLDOWN) {
-        // TP: Momentum exhaustion from overbought
-        markers.push({
-          time: c.time,
-          position: 'aboveBar',
-          color: '#f59e0b',
-          shape: 'arrowDown',
-          text: 'TP',
-          size: 0.9,
-        });
-        lastSellIdx = i;
-      } else if ((isTrendBreakSoft || isTrendBreakHard) && isBearishCandle && (i - lastSellIdx) >= COOLDOWN) {
-        // EXIT: Trend breakdown
+      // [Fix #6] Filter EMA 50: harga harus di bawah atau mendekati EMA 50 (jika tersedia)
+      const isBelowEma50 = !e50 || c.close <= e50 * 1.002;
+
+      // Momentum: Stoch RSI Death Cross dari atas
+      const isStochCrossDown = prevK >= prevD && k < d;
+      // [Fix #3] Zona overbought lebih ketat: hanya dari area jenuh beli yang sesungguhnya
+      const isFromOverbought = prevK >= 70 || (prevK > 60 && k > 50);
+
+      // Candle reaksi merah (body solid minimal 20% dari range)
+      const isBearishCandle = c.close < c.open && (candleRange === 0 || bodySize > candleRange * 0.2);
+
+      if (isBearTrend && isBelowEma50 && isStochCrossDown && isFromOverbought && isBearishCandle && (i - lastSellIdx) >= COOLDOWN) {
+        // [Fix #4] Auto-CLOSE posisi BUY yang masih aktif sebelum entry SELL baru
+        if (hasActiveBuy) {
+          markers.push({
+            time: c.time,
+            position: 'aboveBar',
+            color: '#eab308',
+            shape: 'circle',
+            text: 'CLOSE',
+            size: 0.8,
+          });
+          lastCloseIdx = i;
+        }
         markers.push({
           time: c.time,
           position: 'aboveBar',
           color: '#f43f5e',
           shape: 'arrowDown',
-          text: 'EXIT',
-          size: 0.9,
+          text: 'SELL',
+          size: 0.8,
         });
         lastSellIdx = i;
+        continue;
+      }
+
+      // === 3. CLOSE SIGNAL (Take Profit / Momentum Exhaustion / Trend Break) ===
+      // --- Close untuk posisi BUY aktif ---
+      const isOverboughtExit = prevK >= prevD && k < d && prevK >= 75;
+      // [Fix #5] Trend break: harga menembus ke bawah EMA 9 (tanpa syarat e9 < e21 yang redundan)
+      const isTrendBreakSoft = c.close < e9 && prevC.close >= e9;
+      const isTrendBreakHard = c.close < e21 && prevC.close >= e21;
+
+      // --- Close untuk posisi SELL aktif ---
+      const isOversoldCoverExit = prevK <= prevD && k > d && prevK <= 25;
+      const isBearTrendBreakSoft = c.close > e9 && prevC.close <= e9;
+      const isBearTrendBreakHard = c.close > e21 && prevC.close <= e21;
+
+      if (hasActiveBuy && (isOverboughtExit || isTrendBreakSoft || isTrendBreakHard) && (i - lastCloseIdx) >= COOLDOWN) {
+        markers.push({
+          time: c.time,
+          position: 'aboveBar',
+          color: '#eab308',
+          shape: 'circle',
+          text: 'CLOSE',
+          size: 0.8,
+        });
+        lastCloseIdx = i;
+      } else if (hasActiveSell && (isOversoldCoverExit || isBearTrendBreakSoft || isBearTrendBreakHard) && (i - lastCloseIdx) >= COOLDOWN) {
+        markers.push({
+          time: c.time,
+          position: 'belowBar',
+          color: '#eab308',
+          shape: 'circle',
+          text: 'CLOSE',
+          size: 0.8,
+        });
+        lastCloseIdx = i;
       }
     }
+
     return markers;
   }
 
+
+
   // --- Scalper Radar Analysis Display ---
-  function updateScalperRadar(candle, e9, e21, k, d) {
+  function updateScalperRadar(candle, e9, e21, e50, k, d) {
     if (!candle) return;
     const price = candle.close;
 
-    // 1. Evaluasi Tren (EMA 9 vs EMA 21)
+    // 1. Evaluasi Tren (EMA 9 vs EMA 21 vs EMA 50)
+    let isStrongBull = false;
     let isBull = false;
+    let isStrongBear = false;
     let isBear = false;
+
     if (e9 && e21) {
+      isStrongBull = e9 >= e21 && price >= e9 && (!e50 || e21 >= e50);
       isBull = e9 >= e21 && price >= e9;
+      isStrongBear = e9 <= e21 && price <= e9 && (!e50 || e21 <= e50);
       isBear = e9 < e21 && price < e9;
+
       if (el.cfTrend) {
-        if (isBull) {
+        if (isStrongBull) {
+          el.cfTrend.textContent = '▲ Strong Bull';
+          el.cfTrend.className = 'cf-value bull';
+          el.cfTrend.title = 'Tren Sangat Kuat Naik (Strong Bull): Harga berada di atas EMA 9, EMA 9 di atas EMA 21, dan EMA 21 di atas EMA 50';
+        } else if (isBull) {
           el.cfTrend.textContent = '▲ Bullish';
           el.cfTrend.className = 'cf-value bull';
+          el.cfTrend.title = 'Tren Naik (Bullish): Harga dan EMA 9 berada di atas EMA 21';
+        } else if (isStrongBear) {
+          el.cfTrend.textContent = '▼ Strong Bear';
+          el.cfTrend.className = 'cf-value bear';
+          el.cfTrend.title = 'Tren Sangat Kuat Turun (Strong Bear): Harga berada di bawah EMA 9, EMA 9 di bawah EMA 21, dan EMA 21 di bawah EMA 50';
         } else if (isBear) {
           el.cfTrend.textContent = '▼ Bearish';
           el.cfTrend.className = 'cf-value bear';
+          el.cfTrend.title = 'Tren Turun (Bearish): Harga dan EMA 9 berada di bawah EMA 21';
         } else {
-          el.cfTrend.textContent = '— Transisi / Konsolidasi';
+          el.cfTrend.textContent = '— Konsolidasi';
           el.cfTrend.className = 'cf-value';
+          el.cfTrend.title = 'Konsolidasi (Mendatar): Garis EMA saling berdekatan dan belum menunjukkan arah tren yang jelas';
         }
       }
     }
@@ -528,40 +674,87 @@
       }
     }
 
-    // 3. Evaluasi Status Sinyal Radar
+    // 3. Evaluasi Status Sinyal Radar — Prioritaskan Sinyal Aktif / BTC Veto / MTF
     if (el.radarSignalBadge && el.radarSignalText) {
-      // BUY SETUP: Bullish trend + Stoch oversold or rebounding from low zone
-      if (isBull && (isStochOversold || (k !== undefined && d !== undefined && kAboveD && k < 50))) {
-        el.radarSignalBadge.className = 'signal-main-badge buy';
-        el.radarSignalText.textContent = 'BUY SETUP AKTIF (Scalp Entry)';
-      }
-      // TP ZONE: Overbought area, consider taking profit
-      else if (isStochOverbought && !kAboveD) {
-        el.radarSignalBadge.className = 'signal-main-badge sell';
-        el.radarSignalText.textContent = 'AREA TP (Stoch Overbought Cross ↓)';
-      }
-      // DANGER ZONE: Bearish trend + momentum down
-      else if (isBear || (e9 && price < e9 && e9 < e21)) {
-        el.radarSignalBadge.className = 'signal-main-badge sell';
-        el.radarSignalText.textContent = 'ZONA BAHAYA (Tren Bearish / Exit)';
-      }
-      // CAUTION: Overbought but still holding
-      else if (isStochOverbought && kAboveD) {
-        el.radarSignalBadge.className = 'signal-main-badge sell';
-        el.radarSignalText.textContent = 'Jenuh Beli (Siap-siap TP)';
-      }
-      // Neutral / Wait
-      else {
-        el.radarSignalBadge.className = 'signal-main-badge neutral';
-        el.radarSignalText.textContent = 'TUNGGU KONFIRMASI (Wait / Neutral)';
+      const btcVeto = state.btcPulseData && state.btcPulseData.veto_active;
+      if (btcVeto) {
+        el.radarSignalBadge.className = 'signal-main-badge veto';
+        el.radarSignalText.textContent = 'WAIT – BTC DUMP RISK (Long DIBLOKIR)';
+      } else if (state.activeSignal) {
+        if (state.activeSignal.type === 'BUY') {
+          if (candle.high >= state.activeSignal.tp) {
+            el.radarSignalBadge.className = 'signal-main-badge buy';
+            el.radarSignalText.textContent = `TARGET TP TERCAPAI @ ${formatPrice(state.activeSignal.tp, state.symbol)}`;
+          } else if (candle.low <= state.activeSignal.sl) {
+            el.radarSignalBadge.className = 'signal-main-badge sell';
+            el.radarSignalText.textContent = `BATAS SL TERSENTUH @ ${formatPrice(state.activeSignal.sl, state.symbol)}`;
+          } else {
+            el.radarSignalBadge.className = 'signal-main-badge buy';
+            el.radarSignalText.textContent = `BUY AKTIF @ ${formatPrice(state.activeSignal.entry, state.symbol)}`;
+          }
+        } else {
+          if (candle.low <= state.activeSignal.tp) {
+            el.radarSignalBadge.className = 'signal-main-badge buy';
+            el.radarSignalText.textContent = `TARGET TP TERCAPAI @ ${formatPrice(state.activeSignal.tp, state.symbol)}`;
+          } else if (candle.high >= state.activeSignal.sl) {
+            el.radarSignalBadge.className = 'signal-main-badge sell';
+            el.radarSignalText.textContent = `BATAS SL TERSENTUH @ ${formatPrice(state.activeSignal.sl, state.symbol)}`;
+          } else {
+            el.radarSignalBadge.className = 'signal-main-badge sell';
+            el.radarSignalText.textContent = `SELL AKTIF @ ${formatPrice(state.activeSignal.entry, state.symbol)}`;
+          }
+        }
+      } else if (state.p0AnalysisData && state.p0AnalysisData.mtf) {
+        const act = state.p0AnalysisData.mtf.actionable_bias;
+        if (act === 'LONG_STRONG') {
+          el.radarSignalBadge.className = 'signal-main-badge buy';
+          el.radarSignalText.textContent = `STRONG LONG (MTF ${state.p0AnalysisData.mtf.score_ratio})`;
+        } else if (act === 'LONG_ON_PULLBACK') {
+          el.radarSignalBadge.className = 'signal-main-badge buy';
+          el.radarSignalText.textContent = `PULLBACK BUY DIP (MTF ${state.p0AnalysisData.mtf.score_ratio})`;
+        } else if (act === 'SHORT_OR_EXIT' || act === 'SHORT_OR_EXIT_ON_PUMP') {
+          el.radarSignalBadge.className = 'signal-main-badge sell';
+          el.radarSignalText.textContent = `BEARISH CAUTION (MTF ${state.p0AnalysisData.mtf.score_ratio})`;
+        } else {
+          el.radarSignalBadge.className = 'signal-main-badge neutral';
+          el.radarSignalText.textContent = `WAIT / CHOPPY (${state.p0AnalysisData.mtf.confluence_summary || 'Netral'})`;
+        }
+      } else {
+        // Fallback lokal jika P0 belum tiba
+        if (isBull && (isStochOversold || (kAboveD && k < 50))) {
+          el.radarSignalBadge.className = 'signal-main-badge buy';
+          el.radarSignalText.textContent = 'BUY SETUP (Konfirmasi)';
+        } else if (isBear && (isStochOverbought || (!kAboveD && k > 50))) {
+          el.radarSignalBadge.className = 'signal-main-badge sell';
+          el.radarSignalText.textContent = 'SELL SETUP (Konfirmasi)';
+        } else {
+          el.radarSignalBadge.className = 'signal-main-badge neutral';
+          el.radarSignalText.textContent = 'TUNGGU KONFIRMASI (Wait / Neutral)';
+        }
       }
     }
 
-    // 4. Kalkulasi Estimasi Target TP & SL — fallback sederhana jika P0 belum siap
-    // Nilai definitif (berbasis ATR + Net R:R) akan di-override oleh renderP0Analysis()
-    if (price > 0 && !state.p0AnalysisData) {
-      const tpPrice = price * 1.005; // +0.5% placeholder
-      const slPrice = e21 && e21 < price ? e21 * 0.998 : price * 0.997;
+    // 4. Update Target TP & SL di Ribbon
+    if (state.activeSignal) {
+      if (el.radarTpVal) el.radarTpVal.textContent = formatPrice(state.activeSignal.tp, state.symbol);
+      if (el.radarSlVal) el.radarSlVal.textContent = formatPrice(state.activeSignal.sl, state.symbol);
+      const risk = Math.abs(state.activeSignal.entry - state.activeSignal.sl);
+      const reward = Math.abs(state.activeSignal.tp - state.activeSignal.entry);
+      if (el.radarNetRR) {
+        el.radarNetRR.textContent = risk > 0 ? `1 : ${(reward / risk).toFixed(2)}` : '--';
+        el.radarNetRR.style.color = 'var(--bull-color)';
+      }
+    } else if (state.p0AnalysisData && state.p0AnalysisData.friction && state.p0AnalysisData.friction.tp1) {
+      const tp1 = state.p0AnalysisData.friction.tp1;
+      if (el.radarTpVal) el.radarTpVal.textContent = formatPrice(tp1.tp, state.symbol);
+      if (el.radarSlVal) el.radarSlVal.textContent = formatPrice(tp1.sl, state.symbol);
+      if (el.radarNetRR) {
+        el.radarNetRR.textContent = tp1.net_rr > 0 ? `1 : ${tp1.net_rr.toFixed(2)}` : '--';
+        el.radarNetRR.style.color = tp1.is_fee_viable ? 'var(--bull-color)' : 'var(--bear-color)';
+      }
+    } else if (price > 0) {
+      const tpPrice = isBull ? price * 1.008 : price * 0.992;
+      const slPrice = isBull ? price * 0.994 : price * 1.006;
       if (el.radarTpVal) el.radarTpVal.textContent = formatPrice(tpPrice, state.symbol);
       if (el.radarSlVal) el.radarSlVal.textContent = formatPrice(slPrice, state.symbol);
     }
@@ -588,15 +781,23 @@
     }
   }
 
-  // --- Calculation of Dynamic Buy (Demand) & Sell (Supply) Zones ---
-  function calculateBuySellZones(candles) {
+  // --- Enhanced Multi-Indicator Calculation of Dynamic Buy (Demand) & Sell (Supply) Zones ---
+  // Acuan Komprehensif (Full Confluence):
+  // 1. P0 Key Support & Resistance Clusters (Touches & Proximity)
+  // 2. Market Structure (Swing Highs / Swing Lows & BOS/CHoCH Retest)
+  // 3. EMA Dynamic Levels (EMA 21 & EMA 50 as dynamic pullback support / pullup resistance)
+  // 4. Volume Profile / RVOL Weighting
+  // 5. Stochastic RSI & RSI Momentum Conditions
+  // 6. Volatility-Adaptive Spread (ATR)
+  function calculateBuySellZones(candles, ema9Data, ema21Data, ema50Data, p0Data) {
     if (!candles || candles.length < 15) return null;
 
-    const lookback = Math.min(candles.length, 50);
+    const currentPrice = candles[candles.length - 1].close;
+    const n = candles.length;
+    const lookback = Math.min(n, 60);
     const slice = candles.slice(-lookback);
-    const currentPrice = slice[slice.length - 1].close;
 
-    // 1. Calculate ATR (14 period)
+    // 1. Dynamic ATR Volatility Sizing
     let trSum = 0;
     const atrPeriod = Math.min(14, slice.length - 1);
     for (let i = slice.length - atrPeriod; i < slice.length; i++) {
@@ -605,50 +806,168 @@
       const tr = Math.max(c.high - c.low, Math.abs(c.high - prevClose), Math.abs(c.low - prevClose));
       trSum += tr;
     }
-    const atr = trSum / atrPeriod;
+    const calcAtr = trSum / atrPeriod;
+    const p0Atr = (p0Data && p0Data.volatility && p0Data.volatility.atr) || null;
+    const atr = Math.max(p0Atr || calcAtr, currentPrice * 0.0015);
 
-    // 2. Identify Swing Lows below currentPrice
+    // 2. Latest EMA Values
+    const lastE9 = ema9Data && ema9Data.length > 0 ? ema9Data[ema9Data.length - 1].value : null;
+    const lastE21 = ema21Data && ema21Data.length > 0 ? ema21Data[ema21Data.length - 1].value : null;
+    const lastE50 = ema50Data && ema50Data.length > 0 ? ema50Data[ema50Data.length - 1].value : null;
+    const isBullTrend = (lastE9 && lastE21) ? (lastE9 >= lastE21) : true;
+
+    // 3. Rolling Volume SMA for RVOL weighting
+    let volSum = 0;
+    for (let i = 0; i < slice.length; i++) volSum += slice[i].volume;
+    const avgVol = volSum / slice.length;
+
+    // 4. Extract Swing Lows (with volume confirmation)
     const swingLows = [];
     for (let i = 2; i < slice.length - 1; i++) {
       const bar = slice[i];
       if (bar.low <= slice[i - 1].low && bar.low <= slice[i + 1].low && bar.low < currentPrice) {
-        swingLows.push(bar.low);
+        const rvol = avgVol > 0 ? (bar.volume / avgVol) : 1.0;
+        swingLows.push({ price: bar.low, rvol: rvol });
       }
     }
 
-    // 3. Identify Swing Highs above currentPrice
+    // 5. Extract Swing Highs (with volume confirmation)
     const swingHighs = [];
     for (let i = 2; i < slice.length - 1; i++) {
       const bar = slice[i];
       if (bar.high >= slice[i - 1].high && bar.high >= slice[i + 1].high && bar.high > currentPrice) {
-        swingHighs.push(bar.high);
+        const rvol = avgVol > 0 ? (bar.volume / avgVol) : 1.0;
+        swingHighs.push({ price: bar.high, rvol: rvol });
       }
     }
 
-    // Pick closest relevant swing low/high
-    let baseBuy = swingLows.length > 0 ? swingLows[swingLows.length - 1] : Math.min(...slice.map(s => s.low));
-    let baseSell = swingHighs.length > 0 ? swingHighs[swingHighs.length - 1] : Math.max(...slice.map(s => s.high));
+    // 6. Gather Demand (Buy Zone) Candidates below currentPrice
+    const buyCandidates = [];
 
-    // Fallback if baseBuy is at or above currentPrice
-    if (baseBuy >= currentPrice) {
+    // Candidate from P0 Support Levels
+    if (p0Data && p0Data.support_resistance) {
+      const ns = p0Data.support_resistance.nearest_support;
+      if (ns && ns.price < currentPrice) {
+        buyCandidates.push({ price: ns.price, weight: 3 + (ns.touches || 1), label: 'P0 Support' });
+      }
+      const ks = p0Data.support_resistance.key_supports || [];
+      for (const s of ks) {
+        if (s.price < currentPrice && s.price >= currentPrice * 0.96) {
+          buyCandidates.push({ price: s.price, weight: 2 + (s.touches || 1), label: 'Key Support' });
+        }
+      }
+    }
+
+    // Candidate from Structure Low
+    if (p0Data && p0Data.structure && p0Data.structure.recent_low) {
+      const rLow = p0Data.structure.recent_low.price;
+      if (rLow && rLow < currentPrice && rLow >= currentPrice * 0.96) {
+        buyCandidates.push({ price: rLow, weight: 3, label: 'Swing Structure Low' });
+      }
+    }
+
+    // Candidate from EMA Dynamic Pullback Support (in Bullish Trend)
+    if (isBullTrend) {
+      if (lastE21 && lastE21 < currentPrice && lastE21 >= currentPrice * 0.97) {
+        buyCandidates.push({ price: lastE21, weight: 3, label: 'EMA 21 Dynamic' });
+      }
+      if (lastE50 && lastE50 < currentPrice && lastE50 >= currentPrice * 0.96) {
+        buyCandidates.push({ price: lastE50, weight: 2.5, label: 'EMA 50 Support' });
+      }
+    }
+
+    // Candidate from Price Action Swing Lows
+    for (const sw of swingLows) {
+      if (sw.price >= currentPrice * 0.95) {
+        buyCandidates.push({ price: sw.price, weight: sw.rvol >= 1.2 ? 2.5 : 1.5, label: 'Price Action Low' });
+      }
+    }
+
+    // 7. Gather Supply (Sell Zone) Candidates above currentPrice
+    const sellCandidates = [];
+
+    // Candidate from P0 Resistance Levels
+    if (p0Data && p0Data.support_resistance) {
+      const nr = p0Data.support_resistance.nearest_resistance;
+      if (nr && nr.price > currentPrice) {
+        sellCandidates.push({ price: nr.price, weight: 3 + (nr.touches || 1), label: 'P0 Resistance' });
+      }
+      const kr = p0Data.support_resistance.key_resistances || [];
+      for (const r of kr) {
+        if (r.price > currentPrice && r.price <= currentPrice * 1.04) {
+          sellCandidates.push({ price: r.price, weight: 2 + (r.touches || 1), label: 'Key Resistance' });
+        }
+      }
+    }
+
+    // Candidate from Structure High
+    if (p0Data && p0Data.structure && p0Data.structure.recent_high) {
+      const rHigh = p0Data.structure.recent_high.price;
+      if (rHigh && rHigh > currentPrice && rHigh <= currentPrice * 1.04) {
+        sellCandidates.push({ price: rHigh, weight: 3, label: 'Swing Structure High' });
+      }
+    }
+
+    // Candidate from EMA Dynamic Pullup Resistance (in Bearish Trend)
+    if (!isBullTrend) {
+      if (lastE21 && lastE21 > currentPrice && lastE21 <= currentPrice * 1.03) {
+        sellCandidates.push({ price: lastE21, weight: 3, label: 'EMA 21 Dynamic' });
+      }
+      if (lastE50 && lastE50 > currentPrice && lastE50 <= currentPrice * 1.04) {
+        sellCandidates.push({ price: lastE50, weight: 2.5, label: 'EMA 50 Resistance' });
+      }
+    }
+
+    // Candidate from Price Action Swing Highs
+    for (const sw of swingHighs) {
+      if (sw.price <= currentPrice * 1.05) {
+        sellCandidates.push({ price: sw.price, weight: sw.rvol >= 1.2 ? 2.5 : 1.5, label: 'Price Action High' });
+      }
+    }
+
+    // 8. Select Optimal Anchor for Buy Zone
+    let baseBuy;
+    if (buyCandidates.length > 0) {
+      buyCandidates.sort((a, b) => {
+        const distA = (currentPrice - a.price) / (1 + a.weight * 0.1);
+        const distB = (currentPrice - b.price) / (1 + b.weight * 0.1);
+        return distA - distB;
+      });
+      baseBuy = buyCandidates[0].price;
+    } else {
       baseBuy = currentPrice - (1.2 * atr);
     }
-    // Fallback if baseSell is at or below currentPrice
-    if (baseSell <= currentPrice) {
+
+    // 9. Select Optimal Anchor for Sell Zone
+    let baseSell;
+    if (sellCandidates.length > 0) {
+      sellCandidates.sort((a, b) => {
+        const distA = (a.price - currentPrice) / (1 + a.weight * 0.1);
+        const distB = (b.price - currentPrice) / (1 + b.weight * 0.1);
+        return distA - distB;
+      });
+      baseSell = sellCandidates[0].price;
+    } else {
       baseSell = currentPrice + (1.2 * atr);
     }
 
-    const buyMin = Math.max(0, baseBuy - (0.3 * atr));
-    const buyMax = Math.min(currentPrice * 0.9995, baseBuy + (0.35 * atr));
+    // 10. Boundaries with Adaptive Spread
+    if (baseBuy >= currentPrice) baseBuy = currentPrice - (1.0 * atr);
+    if (baseSell <= currentPrice) baseSell = currentPrice + (1.0 * atr);
 
-    const sellMin = Math.max(currentPrice * 1.0005, baseSell - (0.35 * atr));
-    const sellMax = baseSell + (0.3 * atr);
+    const halfSpread = Math.max(0.25 * atr, currentPrice * 0.0006);
+    const buyMin = Math.max(0, baseBuy - halfSpread);
+    const buyMax = Math.min(currentPrice * 0.9997, baseBuy + halfSpread);
 
+    const sellMin = Math.max(currentPrice * 1.0003, baseSell - halfSpread);
+    const sellMax = baseSell + halfSpread;
+
+    const prec = getPrecision(currentPrice);
     return {
-      buyMin: parseFloat(buyMin.toFixed(getPrecision(currentPrice))),
-      buyMax: parseFloat(buyMax.toFixed(getPrecision(currentPrice))),
-      sellMin: parseFloat(sellMin.toFixed(getPrecision(currentPrice))),
-      sellMax: parseFloat(sellMax.toFixed(getPrecision(currentPrice))),
+      buyMin: parseFloat(buyMin.toFixed(prec)),
+      buyMax: parseFloat(buyMax.toFixed(prec)),
+      sellMin: parseFloat(sellMin.toFixed(prec)),
+      sellMax: parseFloat(sellMax.toFixed(prec)),
       atr: atr
     };
   }
@@ -665,11 +984,13 @@
     updateZoneBlocks();
 
     // 3. Update Scalper Radar Ribbon Zones Widget
-    if (el.radarBuyZoneVal) {
-      el.radarBuyZoneVal.textContent = `${formatPrice(zones.buyMin, state.symbol)} - ${formatPrice(zones.buyMax, state.symbol)}`;
+    if (el.radarBuyZoneVal && currentPrice) {
+      const buyDist = (((currentPrice - zones.buyMax) / currentPrice) * 100).toFixed(2);
+      el.radarBuyZoneVal.textContent = `${formatPrice(zones.buyMin, state.symbol)} - ${formatPrice(zones.buyMax, state.symbol)} (-${buyDist}%)`;
     }
-    if (el.radarSellZoneVal) {
-      el.radarSellZoneVal.textContent = `${formatPrice(zones.sellMin, state.symbol)} - ${formatPrice(zones.sellMax, state.symbol)}`;
+    if (el.radarSellZoneVal && currentPrice) {
+      const sellDist = (((zones.sellMin - currentPrice) / currentPrice) * 100).toFixed(2);
+      el.radarSellZoneVal.textContent = `${formatPrice(zones.sellMin, state.symbol)} - ${formatPrice(zones.sellMax, state.symbol)} (+${sellDist}%)`;
     }
 
     updateZoneStatusBadge(currentPrice);
@@ -793,20 +1114,25 @@
     if (currentPrice <= zones.buyMax && currentPrice >= zones.buyMin) {
       el.radarZoneStatusPill.className = 'zone-status-pill in-buy';
       el.radarZoneStatusText.textContent = 'IN BUY AREA';
+      el.radarZoneStatusPill.title = 'Harga Berada di Buy Zone (Area Beli): Peluang bagus untuk entri beli jika didukung pantulan Stochastic atau candle hijau';
     } else if (currentPrice >= zones.sellMin && currentPrice <= zones.sellMax) {
       el.radarZoneStatusPill.className = 'zone-status-pill in-sell';
       el.radarZoneStatusText.textContent = 'IN SELL AREA';
+      el.radarZoneStatusPill.title = 'Harga Berada di Sell Zone (Area Jual): Area take profit posisi beli atau mencari sinyal penolakan (Sell)';
     } else if (currentPrice < zones.buyMin) {
       el.radarZoneStatusPill.className = 'zone-status-pill in-buy';
       el.radarZoneStatusText.textContent = 'BELOW BUY AREA';
+      el.radarZoneStatusPill.title = 'Harga di Bawah Buy Zone (Diskon Dalam): Harga sangat murah, waspadai potensi pantulan balik ke atas';
     } else if (currentPrice > zones.sellMax) {
       el.radarZoneStatusPill.className = 'zone-status-pill in-sell';
       el.radarZoneStatusText.textContent = 'ABOVE SELL AREA';
+      el.radarZoneStatusPill.title = 'Harga di Atas Sell Zone (Overextended): Harga sangat mahal, rawan koreksi turun tajam';
     } else {
       const distToBuy = (((currentPrice - zones.buyMax) / currentPrice) * 100).toFixed(2);
       const distToSell = (((zones.sellMin - currentPrice) / currentPrice) * 100).toFixed(2);
       el.radarZoneStatusPill.className = 'zone-status-pill neutral';
       el.radarZoneStatusText.textContent = `-${distToBuy}% B | +${distToSell}% S`;
+      el.radarZoneStatusPill.title = `Area Netral: Jarak ke Buy Zone -${distToBuy}%, Jarak ke Sell Zone +${distToSell}%`;
     }
   }
 
@@ -930,22 +1256,23 @@
     el.btcGatekeeperBadge.className = badgeClass;
     el.btcGatekeeperText.textContent = labelText;
 
-    // Tooltip detail
+    // Tooltip detail (Bahasa Indonesia yang mudah dipahami)
+    const statusDesc = status === 'DUMP_RISK' ? 'BAHAYA: BTC Sedang Dump/Crash (Sinyal Beli Diblokir)' :
+      status === 'CAUTION' ? 'WASPADA: BTC Mengalami Tekanan Turun' :
+      status === 'SAFE' ? 'AMAN: Kondisi Bitcoin Stabil & Kondusif' : 'Memuat Data...';
+
     const tooltipLines = [
-      `BTC Market Gatekeeper`,
-      `Status: ${status}`,
-      `Harga: ${price}`,
-      `Return 5M: ${ret}`,
-      `EMA20: ${pulse.btc_ema20 ? '$' + Number(pulse.btc_ema20).toLocaleString('en-US', { maximumFractionDigits: 0 }) : '--'}`,
-      `ATR Ratio: ${pulse.btc_atr_ratio}x`,
+      `Satpam Pasar BTC (Market Gatekeeper)`,
+      `Status: ${statusDesc}`,
+      `Harga BTC: ${price} (${ret} dalam 5 menit)`,
+      `EMA 20 BTC: ${pulse.btc_ema20 ? '$' + Number(pulse.btc_ema20).toLocaleString('en-US', { maximumFractionDigits: 0 }) : '--'}`,
+      `Rasio Volatilitas ATR: ${pulse.btc_atr_ratio}x`,
     ];
     if (pulse.reasons && pulse.reasons.length > 0) {
-      tooltipLines.push('', 'Alasan Veto:');
+      tooltipLines.push('', 'Peringatan / Alasan:');
       pulse.reasons.forEach(r => tooltipLines.push('• ' + r));
     }
-    if (pulse.cache_age_sec !== null && pulse.cache_age_sec !== undefined) {
-      tooltipLines.push('', `Cache: ${pulse.cache_age_sec}s lalu`);
-    }
+    tooltipLines.push('', 'Fungsi: Memastikan Anda tidak masuk posisi Long/Buy saat Bitcoin sedang longsor.');
     el.btcGatekeeperBadge.title = tooltipLines.join('\n');
 
     // Jika veto aktif — tampilkan overlay banner di radar
@@ -1024,10 +1351,16 @@
             cat === 'WATCH' ? 'watch' :
               cat === 'WEAK' ? 'weak' : 'no-trade'
       );
-      const bd = scoreData.breakdown || {};
-      el.signalScoreCircle.title = Object.entries(bd).map(function (e) { return e[0] + ': ' + e[1]; }).join(' | ');
+      const catIndo = cat === 'VERY_STRONG' ? 'Sangat Kuat (Peluang Sangat Bagus)' :
+        cat === 'STRONG' ? 'Kuat (Kondisi Bagus)' :
+          cat === 'WATCH' ? 'Waspada (Tunggu Konfirmasi Lebih Lanjut)' :
+            cat === 'WEAK' ? 'Lemah (Hindari Eksekusi)' : 'Tanpa Setup';
+      el.signalScoreCircle.title = `Skor AI Probabilitas: ${score}/100 [${catIndo}]\nAkumulasi indikator: Tren Moving Average, Momentum Stoch/RSI, Aliran Volume, dan Struktur Pasar`;
     }
-    if (el.signalScoreLabel) el.signalScoreLabel.textContent = catLabel;
+    if (el.signalScoreLabel) {
+      el.signalScoreLabel.textContent = catLabel;
+      el.signalScoreLabel.title = `Tingkat Kepercayaan Setup: ${catLabel}`;
+    }
   }
 
   function renderMarketRegime(regimeData) {
@@ -1040,19 +1373,20 @@
           r === 'TRENDING_DOWN' ? 'bear' :
             r === 'HIGH_VOL' ? 'high-vol' : 'range'
       );
-      el.regimeBadge.title = 'Scalp Filter: ' + (regimeData.scalp_filter || '--');
+      const isAllowed = regimeData.scalp_filter === 'ALLOWED';
+      el.regimeBadge.title = `Rezim Pasar: ${regimeData.regime_label || '--'}\nFilter Scalping: ${isAllowed ? 'AMAN DILAKUKAN' : 'HATI-HATI / KURANG KONDUSIF'}`;
     }
     if (el.chopBadge) {
       const chop = regimeData.chop || 0;
       el.chopBadge.textContent = 'CHOP: ' + chop.toFixed(1);
       el.chopBadge.className = 'regime-metric ' + (chop > 61.8 ? 'warn' : (chop < 38.2 ? 'strong' : ''));
-      el.chopBadge.title = chop > 61.8 ? 'Choppy' : (chop < 38.2 ? 'Trending' : 'Transisi');
+      el.chopBadge.title = `Choppiness Index (${chop.toFixed(1)}): ` + (chop > 61.8 ? 'Pasar Sideways / Acak (Hindari breakout palsu)' : (chop < 38.2 ? 'Pasar Sedang Tren Kuat (Sangat bagus untuk trading)' : 'Pasar Transisi / Sedang'));
     }
     if (el.adxBadge) {
       const adx = regimeData.adx || 0;
       el.adxBadge.textContent = 'ADX: ' + adx.toFixed(1);
       el.adxBadge.className = 'regime-metric ' + (adx >= 25 ? 'strong' : (adx < 20 ? 'warn' : ''));
-      el.adxBadge.title = '+DI: ' + (regimeData.plus_di || 0).toFixed(1) + ' | -DI: ' + (regimeData.minus_di || 0).toFixed(1);
+      el.adxBadge.title = `ADX Kekuatan Tren (${adx.toFixed(1)}): ` + (adx >= 25 ? 'Tren Kuat & Bertenaga' : (adx < 20 ? 'Tren Lemah / Lesu' : 'Kekuatan Tren Sedang')) + `\n+DI (Beli): ${(regimeData.plus_di || 0).toFixed(1)} | -DI (Jual): ${(regimeData.minus_di || 0).toFixed(1)}`;
     }
   }
 
@@ -1089,111 +1423,6 @@
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Trade State Machine — Frontend Integration
-  // ---------------------------------------------------------------------------
-
-  async function openTrade(p0Data) {
-    if (!p0Data || !p0Data.setups || p0Data.setups.length === 0) return;
-    if (!p0Data.friction || !p0Data.friction.tp1) return;
-
-    const bestSetup = p0Data.setups[0];
-    const tp1 = p0Data.friction.tp1;
-    const tp2 = p0Data.friction.tp2;
-
-    try {
-      const params = new URLSearchParams({
-        symbol: state.symbol,
-        interval: state.interval,
-        entry_price: tp1.entry,
-        tp1_price: tp1.tp,
-        tp2_price: tp2.tp,
-        sl_price: tp1.sl,
-        signal_score: p0Data.signal_score ? p0Data.signal_score.score : 0,
-        setup_type: bestSetup.type,
-        notify: 'true',
-      });
-      const resp = await fetch('/api/trade/open?' + params.toString(), { method: 'POST' });
-      if (!resp.ok) return;
-      const data = await resp.json();
-      state.activeTradeId = data.trade_id;
-      state.activeTrade = data.trade;
-      renderTradeState(data.trade);
-      startTradeUpdateLoop();
-    } catch (e) {
-      console.warn('openTrade error:', e);
-    }
-  }
-
-  async function updateTrade() {
-    if (!state.activeTradeId || !state.lastPrice) return;
-    try {
-      const params = new URLSearchParams({
-        trade_id: state.activeTradeId,
-        current_price: state.lastPrice,
-        notify: 'true',
-      });
-      const resp = await fetch('/api/trade/update?' + params.toString(), { method: 'POST' });
-      if (!resp.ok) return;
-      const data = await resp.json();
-      state.activeTrade = data.trade;
-      renderTradeState(data.trade);
-
-      // Stop auto-update jika state terminal
-      const terminal = new Set(['TP2_HIT', 'STOPPED_BE', 'STOPPED_OUT', 'EXPIRED', 'INVALIDATED']);
-      if (terminal.has(data.new_state)) stopTradeUpdateLoop();
-    } catch (e) {
-      console.warn('updateTrade error:', e);
-    }
-  }
-
-  function startTradeUpdateLoop() {
-    stopTradeUpdateLoop();
-    state.tradeUpdateTimer = setInterval(updateTrade, 5000); // tiap 5 detik
-  }
-
-  function stopTradeUpdateLoop() {
-    if (state.tradeUpdateTimer) { clearInterval(state.tradeUpdateTimer); state.tradeUpdateTimer = null; }
-  }
-
-  function renderTradeState(trade) {
-    if (!el.tradeStatePanel || !el.tradeStateBadge || !el.tradeStateText) return;
-    if (!trade) { el.tradeStatePanel.style.display = 'none'; return; }
-
-    el.tradeStatePanel.style.display = 'flex';
-    const s = trade.state;
-    const labels = {
-      DETECTED: 'Terdeteksi',
-      PENDING_ENTRY: 'Menunggu Entry',
-      ACTIVE: 'AKTIF',
-      TP1_HIT: 'TP1 Hit',
-      BREAKEVEN_ACTIVE: 'Breakeven',
-      TP2_HIT: 'TP2 Hit',
-      STOPPED_BE: 'Stop BE',
-      STOPPED_OUT: 'Stop Loss',
-      EXPIRED: 'Expired',
-      INVALIDATED: 'Invalid',
-    };
-    const cls = {
-      ACTIVE: 'active', TP1_HIT: 'tp1', BREAKEVEN_ACTIVE: 'be',
-      TP2_HIT: 'win', STOPPED_OUT: 'loss', STOPPED_BE: 'be',
-      EXPIRED: 'expired', INVALIDATED: 'expired',
-    };
-    el.tradeStateBadge.textContent = labels[s] || s;
-    el.tradeStateBadge.className = 'trade-state-badge ' + (cls[s] || 'pending');
-
-    const prec = p => formatPrice(p, state.symbol);
-    let info = `Entry: ${prec(trade.entry_price)} | SL: ${prec(trade.sl_price)} | TP1: ${prec(trade.tp1_price)}`;
-    if (trade.partial_filled) info += ` | PnL 50%: +${trade.pnl_partial_pct}%`;
-    el.tradeStateText.textContent = info;
-
-    if (el.openTradeBtn) {
-      const terminal = new Set(['TP2_HIT', 'STOPPED_BE', 'STOPPED_OUT', 'EXPIRED', 'INVALIDATED']);
-      el.openTradeBtn.textContent = terminal.has(s) ? 'Buka Trade Baru' : 'Trade Aktif';
-      el.openTradeBtn.disabled = !terminal.has(s) && s !== 'DETECTED';
-    }
-  }
-
   function renderP0Analysis(data) {
     if (!data || data.error) return;
 
@@ -1207,7 +1436,7 @@
         const bias = info.bias || 'NEUTRAL';
         elem.textContent = `${tfKey.toUpperCase()}: ${bias === 'BULLISH' ? 'BULL' : (bias === 'BEARISH' ? 'BEAR' : 'CHOP')}`;
         elem.className = 'mtf-pill ' + (bias === 'BULLISH' ? 'bull' : (bias === 'BEARISH' ? 'bear' : 'range'));
-        elem.title = `${tfKey.toUpperCase()} - Bias: ${bias} | EMA: ${info.ema_alignment || '--'} | BOS: ${info.last_bos || 'None'}`;
+        elem.title = `Timeframe ${tfKey.toUpperCase()}: Tren ${bias === 'BULLISH' ? 'Naik (Bullish)' : (bias === 'BEARISH' ? 'Turun (Bearish)' : 'Mendatar (Netral)')} | EMA: ${info.ema_alignment || '--'} | Sinyal Struktur: ${info.last_bos || 'Normal'}`;
       };
 
       updatePill(el.mtf1h, '1h');
@@ -1217,6 +1446,7 @@
 
       if (el.mtfSummaryText) {
         el.mtfSummaryText.textContent = data.mtf.score_ratio || '--/4';
+        el.mtfSummaryText.title = `Keselarasan Timeframe: ${data.mtf.score_ratio} timeframe searah (${data.mtf.confluence_summary || ''})`;
       }
     }
 
@@ -1226,19 +1456,21 @@
         const trend = data.structure.trend || 'RANGE';
         el.structureTrendBadge.textContent = `${trend} (${data.structure.structure_strength}%)`;
         el.structureTrendBadge.className = 'structure-trend-badge ' + (trend === 'BULLISH' ? 'bull' : (trend === 'BEARISH' ? 'bear' : 'range'));
+        el.structureTrendBadge.title = `Struktur Tren Price Action: Tren ${trend === 'BULLISH' ? 'Naik (Higher Highs)' : (trend === 'BEARISH' ? 'Turun (Lower Lows)' : 'Mendatar')} dengan kekuatan ${data.structure.structure_strength}%`;
       }
       if (el.bosChochBadge) {
         if (data.structure.last_choch) {
           el.bosChochBadge.textContent = 'CHoCH Reversal';
-          el.bosChochBadge.title = data.structure.last_choch.label || 'Change of Character';
+          el.bosChochBadge.title = 'CHoCH (Change of Character): Sinyal awal pembalikan arah tren pasar dari swing sebelumnya';
           el.bosChochBadge.style.display = 'inline-block';
         } else if (data.structure.last_bos) {
           const isBull = data.structure.last_bos.type === 'BULLISH_BOS';
           el.bosChochBadge.textContent = isBull ? 'Bull BOS' : 'Bear BOS';
-          el.bosChochBadge.title = data.structure.last_bos.label || 'Break of Structure';
+          el.bosChochBadge.title = `BOS (Break of Structure): Penembusan ${isBull ? 'puncak (Resistance)' : 'lembah (Support)'} sebelumnya yang mengonfirmasi tren berlanjut`;
           el.bosChochBadge.style.display = 'inline-block';
         } else {
           el.bosChochBadge.textContent = 'Structure Intact';
+          el.bosChochBadge.title = 'Struktur Pasar Utuh: Belum terjadi penembusan puncak/lembah baru';
           el.bosChochBadge.style.display = 'inline-block';
         }
       }
@@ -1248,25 +1480,32 @@
     if (data.volume && el.rvolBadge) {
       el.rvolBadge.textContent = `RVOL: ${data.volume.rvol}x`;
       el.rvolBadge.className = 'rvol-badge ' + (data.volume.is_spike ? 'spike' : '');
-      el.rvolBadge.title = `Volume saat ini vs 20 SMA (${data.volume.classification})`;
+      el.rvolBadge.title = `Relative Volume (${data.volume.rvol}x): Volume saat ini dibandingkan rata-rata 20 candle. ${data.volume.is_spike ? 'Terdeteksi lonjakan volume besar / masuknya paus!' : 'Kondisi volume pasar normal.'}`;
     }
     if (data.volatility && el.atrBadge) {
       const cls = data.volatility.classification || 'NORMAL';
       el.atrBadge.textContent = `ATR: ${data.volatility.atr_pct}% (${cls})`;
       el.atrBadge.className = 'atr-badge ' + (cls === 'EXTREME' ? 'extreme' : '');
-      el.atrBadge.title = `ATR 14: ${data.volatility.atr} (${cls})`;
+      el.atrBadge.title = `Volatilitas ATR (Average True Range): Rata-rata jarak lilin ${data.volatility.atr} (${data.volatility.atr_pct}% dari harga). Kategori: ${cls === 'EXTREME' ? 'Sangat Liar / Ekstrem' : (cls === 'HIGH' ? 'Tinggi' : 'Normal')}`;
     }
 
-    // 4. Render S/R lines on chart
+    // 4. Render S/R lines on chart & update Buy/Sell Zones with P0 confluence
     if (data.support_resistance) {
       renderSrPriceLines(data.support_resistance);
-      const ns = data.support_resistance.nearest_support;
-      const nr = data.support_resistance.nearest_resistance;
-      if (ns && el.radarBuyZoneVal) {
-        el.radarBuyZoneVal.textContent = `${formatPrice(ns.price, state.symbol)} (-${ns.dist_pct}%)`;
-      }
-      if (nr && el.radarSellZoneVal) {
-        el.radarSellZoneVal.textContent = `${formatPrice(nr.price, state.symbol)} (+${nr.dist_pct}%)`;
+    }
+    if (state.candlesCache && state.candlesCache.length > 15) {
+      const ema9Data = calculateEMA(state.candlesCache, 9);
+      const ema21Data = calculateEMA(state.candlesCache, 21);
+      const ema50Data = calculateEMA(state.candlesCache, 50);
+      const p0Zones = calculateBuySellZones(
+        state.candlesCache,
+        ema9Data,
+        ema21Data,
+        ema50Data,
+        data
+      );
+      if (p0Zones && state.lastPrice) {
+        updateBuySellZones(p0Zones, state.lastPrice);
       }
     }
 
@@ -1278,18 +1517,23 @@
         el.radarSignalBadge.className = 'signal-main-badge veto';
         const origBias = data.mtf.original_bias || '';
         el.radarSignalText.textContent = `WAIT – BTC DUMP RISK (${origBias || 'Long DIBLOKIR'})`;
+        el.radarSignalBadge.title = 'Sinyal Diblokir: Bitcoin sedang mengalami dump tajam. Jangan buka posisi beli (Long) demi keamanan modal.';
       } else if (act === 'LONG_STRONG') {
         el.radarSignalBadge.className = 'signal-main-badge buy';
         el.radarSignalText.textContent = `STRONG LONG (MTF ${data.mtf.score_ratio})`;
+        el.radarSignalBadge.title = `Sinyal Beli Kuat: Multi-timeframe (${data.mtf.score_ratio}) selaras ke arah naik dengan dorongan tren solid.`;
       } else if (act === 'LONG_ON_PULLBACK') {
         el.radarSignalBadge.className = 'signal-main-badge buy';
         el.radarSignalText.textContent = `PULLBACK BUY DIP (MTF ${data.mtf.score_ratio})`;
+        el.radarSignalBadge.title = 'Sinyal Beli di Koreksi (Pullback): Tren besar sedang naik, tunggu koreksi harga menyentuh Buy Zone / EMA 21 sebelum masuk.';
       } else if (act === 'SHORT_OR_EXIT' || act === 'SHORT_OR_EXIT_ON_PUMP') {
         el.radarSignalBadge.className = 'signal-main-badge sell';
         el.radarSignalText.textContent = `BEARISH CAUTION (MTF ${data.mtf.score_ratio})`;
+        el.radarSignalBadge.title = 'Waspada Penurunan (Bearish): Tekanan jual mendominasi di multi-timeframe, pertimbangkan keluar posisi beli atau pasang sell.';
       } else {
         el.radarSignalBadge.className = 'signal-main-badge neutral';
         el.radarSignalText.textContent = `WAIT / CHOPPY (${data.mtf.confluence_summary})`;
+        el.radarSignalBadge.title = `Pasar Sideways / Choppy: Arah tren belum selaras (${data.mtf.confluence_summary}). Lebih bijak menunggu konfirmasi sebelum masuk.`;
       }
     }
 
@@ -1300,8 +1544,14 @@
       const fc = data.friction.cost_detail;
 
       // Update TP1, SL values (Net — setelah friction)
-      if (el.radarTpVal) el.radarTpVal.textContent = formatPrice(tp1.tp, state.symbol);
-      if (el.radarSlVal) el.radarSlVal.textContent = formatPrice(tp1.sl, state.symbol);
+      if (el.radarTpVal) {
+        el.radarTpVal.textContent = formatPrice(tp1.tp, state.symbol);
+        el.radarTpVal.title = `Target Take Profit: ${formatPrice(tp1.tp, state.symbol)} (Keuntungan bersih terproyeksi setelah dipotong fee)`;
+      }
+      if (el.radarSlVal) {
+        el.radarSlVal.textContent = formatPrice(tp1.sl, state.symbol);
+        el.radarSlVal.title = `Batas Stop Loss: ${formatPrice(tp1.sl, state.symbol)} (Batas maksimal risiko kerugian)`;
+      }
 
       // Net R:R display
       if (el.radarNetRR) {
@@ -1309,25 +1559,31 @@
         el.radarNetRR.style.color = tp1.is_fee_viable
           ? (tp1.net_rr >= 2.0 ? 'var(--bull-color)' : '#f59e0b')
           : 'var(--bear-color)';
+        el.radarNetRR.title = `Rasio Risk to Reward Bersih (Net R:R 1:${tp1.net_rr.toFixed(2)}): Perbandingan potensi keuntungan bersih terhadap risiko setelah dipotong biaya fee`;
       }
 
       // Friction round-trip cost
       if (el.radarFriction) {
         el.radarFriction.textContent = `${fc.cost_roundtrip_pct}% RT`;
         el.radarFriction.title = [
-          `Fee: ${fc.fee_rate_pct}%`,
-          `PPh: ${fc.pph_pct}%`,
-          `PPN: ${fc.ppn_pct}%`,
-          `Slippage: ${fc.slippage_pct}%`,
-          `Total per sisi: ${fc.cost_one_side_pct}%`,
-          `Round-trip: ${fc.cost_roundtrip_pct}%`,
-        ].join(' | ');
+          `Friction (Biaya Transaksi Lengkap Buka & Tutup Posisi):`,
+          `• Fee Bursa: ${fc.fee_rate_pct}%`,
+          `• Pajak Kripto (PPh): ${fc.pph_pct}%`,
+          `• PPN: ${fc.ppn_pct}%`,
+          `• Estimasi Slippage Spread: ${fc.slippage_pct}%`,
+          `• Total Sekali Transaksi: ${fc.cost_one_side_pct}%`,
+          `• Total Pulang-Pergi (Round-trip): ${fc.cost_roundtrip_pct}%`,
+          `Pastikan target laba Anda lebih besar dari ${fc.cost_roundtrip_pct}% agar untung murni.`
+        ].join('\n');
       }
 
       // Viability badge
       if (el.netRRViabilityBadge && el.netRRViabilityText) {
         el.netRRViabilityBadge.style.display = 'flex';
         el.netRRViabilityText.textContent = tp1.viability_label;
+        el.netRRViabilityBadge.title = tp1.is_fee_viable ?
+          `Kelayakan Trading: Laba target TP jauh lebih besar daripada risiko dan biaya fee (Net R:R 1:${tp1.net_rr.toFixed(2)})` :
+          `Tidak Layak Trading: Target profit terlalu tipis sehingga berisiko tergerus biaya fee transaksi dan spread bursa`;
 
         if (!tp1.is_fee_viable) {
           el.netRRViabilityBadge.className = 'net-rr-viability-badge fee-unviable';
@@ -2047,13 +2303,20 @@
       }
 
       // RSI(14) populate
-      if (state.rsiSeries) {
-        const rsiData = calculateRSI(candles, 14);
-        if (rsiData.length > 0) state.rsiSeries.setData(rsiData);
+      const rsiData = calculateRSI(candles, 14);
+      if (state.rsiSeries && rsiData.length > 0) {
+        state.rsiSeries.setData(rsiData);
       }
 
       // Generate Scalper Signals (Buy/Exit Markers on Candlestick Chart)
-      state.scalperMarkers = generateScalperSignals(candles, ema9Data, ema21Data, stochData.kData, stochData.dData);
+      state.scalperMarkers = generateScalperSignals(
+        candles,
+        ema9Data,
+        ema21Data,
+        ema50Data,
+        stochData.kData,
+        stochData.dData
+      );
       if (state.candleSeries) {
         state.candleSeries.setMarkers(state.showSignals ? state.scalperMarkers : []);
       }
@@ -2075,7 +2338,7 @@
       state.currentStochD = lastD;
 
       // Update Scalper Radar Ribbon (Metode 1)
-      updateScalperRadar(last, lastE9, lastE21, lastK, lastD);
+      updateScalperRadar(last, lastE9, lastE21, lastE50, lastK, lastD);
       if (el.stochKBadgeVal && lastK !== null) el.stochKBadgeVal.textContent = lastK.toFixed(1);
       if (el.stochDBadgeVal && lastD !== null) el.stochDBadgeVal.textContent = lastD.toFixed(1);
       if (el.stochHoverTime && last) el.stochHoverTime.textContent = formatTime(last.time, true);
@@ -2084,7 +2347,13 @@
       fetchP0Analysis(state.symbol, state.interval);
 
       // Compute & Render Dynamic Buy & Sell Zones
-      const initialZones = calculateBuySellZones(candles);
+      const initialZones = calculateBuySellZones(
+        candles,
+        ema9Data,
+        ema21Data,
+        ema50Data,
+        state.p0AnalysisData
+      );
       if (initialZones) {
         updateBuySellZones(initialZones, last.close);
       }
@@ -2379,14 +2648,30 @@
       }
 
       // RSI(14) update on candle close
-      if (state.rsiSeries && state.candlesCache.length > 15) {
-        const rsiData = calculateRSI(state.candlesCache, 14);
-        if (rsiData.length > 0) state.rsiSeries.setData(rsiData);
+      const rsiData = calculateRSI(state.candlesCache, 14);
+      if (state.rsiSeries && rsiData.length > 0) {
+        state.rsiSeries.setData(rsiData);
       }
 
-      state.scalperMarkers = generateScalperSignals(state.candlesCache, ema9Data, ema21Data, stochData.kData, stochData.dData);
+      const prevMarkerCount = (state.scalperMarkers || []).length;
+      state.scalperMarkers = generateScalperSignals(
+        state.candlesCache,
+        ema9Data,
+        ema21Data,
+        ema50Data,
+        stochData.kData,
+        stochData.dData
+      );
       if (state.candleSeries) {
         state.candleSeries.setMarkers(state.showSignals ? state.scalperMarkers : []);
+      }
+
+      // Bunyikan chime notifikasi jika ada sinyal baru pada candle yang baru saja ditutup
+      if (state.scalperMarkers.length > prevMarkerCount) {
+        const latestM = state.scalperMarkers[state.scalperMarkers.length - 1];
+        if (latestM && latestM.time === candleTime) {
+          playScalpAlert(latestM.text === 'BUY' ? 'buy' : latestM.text === 'SELL' ? 'warn' : 'alert');
+        }
       }
 
       if (ema9Data.length > 0) {
@@ -2405,7 +2690,13 @@
       if (stochData.dData.length > 0) state.currentStochD = stochData.dData[stochData.dData.length - 1].value;
 
       // Recalculate dynamic buy & sell zones on candle close
-      const refreshedZones = calculateBuySellZones(state.candlesCache);
+      const refreshedZones = calculateBuySellZones(
+        state.candlesCache,
+        ema9Data,
+        ema21Data,
+        ema50Data,
+        state.p0AnalysisData
+      );
       if (refreshedZones) {
         updateBuySellZones(refreshedZones, c);
       }
@@ -2414,8 +2705,8 @@
       fetchP0Analysis(state.symbol, state.interval);
     }
 
-    // Perbarui Radar Scalper (Metode 1) secara real-time
-    updateScalperRadar(candleBar, state.currentEma9, state.currentEma21, state.currentStochK, state.currentStochD);
+    // Perbarui Radar Scalper secara real-time
+    updateScalperRadar(candleBar, state.currentEma9, state.currentEma21, state.currentEma50, state.currentStochK, state.currentStochD);
     updateZoneStatusBadge(c);
 
     updatePriceDisplay(c, state.lastPrice);
@@ -2643,7 +2934,9 @@
     load24hStats(); // Immediately update 24H stats for new pair
     el.tradesList.innerHTML = '';
     clearZonePriceLines();
+    clearSignalPriceLines();
     state.currentZones = null;
+    state.activeSignal = null;
     state.scalperMarkers = [];
     state.candlesCache = [];
     state.lastCandle = null;
@@ -2670,7 +2963,9 @@
 
     updateIntervalUI();
     clearZonePriceLines();
+    clearSignalPriceLines();
     state.currentZones = null;
+    state.activeSignal = null;
     state.scalperMarkers = [];
     state.candlesCache = [];
     state.lastCandle = null;
@@ -3113,6 +3408,11 @@
         if (state.candleSeries) {
           state.candleSeries.setMarkers(state.showSignals ? (state.scalperMarkers || []) : []);
         }
+        if (!state.showSignals) {
+          clearSignalPriceLines();
+        } else if (state.activeSignal) {
+          renderSignalPriceLines(state.activeSignal);
+        }
       });
     }
 
@@ -3170,23 +3470,6 @@
       el.toggleRadarHudBtn.addEventListener('click', () => {
         const willCollapse = !el.scalperRadar.classList.contains('is-collapsed');
         applyHudState(willCollapse);
-      });
-    }
-
-    // Open Trade button
-    if (el.openTradeBtn) {
-      el.openTradeBtn.addEventListener('click', () => {
-        if (state.p0AnalysisData) openTrade(state.p0AnalysisData);
-      });
-    }
-
-    // Close Trade button
-    if (el.tradeCloseBtn) {
-      el.tradeCloseBtn.addEventListener('click', () => {
-        stopTradeUpdateLoop();
-        state.activeTradeId = null;
-        state.activeTrade = null;
-        if (el.tradeStatePanel) el.tradeStatePanel.style.display = 'none';
       });
     }
 

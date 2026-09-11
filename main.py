@@ -326,18 +326,7 @@ async def get_klines(
 
 from analyzer.p0_engine import (
     run_full_p0_analysis,
-    create_trade_state,
-    advance_trade_state,
-    get_trade_state_label,
-    calculate_signal_ttl,
 )
-
-# ---------------------------------------------------------------------------
-# Trade Lifecycle State Machine Store
-# In-memory store — key = trade["id"]
-# ---------------------------------------------------------------------------
-trade_store: dict[str, dict] = {}
-TRADE_STORE_MAX = 50   # maks trade aktif/historis di memori
 
 # ---------------------------------------------------------------------------
 # Telegram Bot Notifier (Roadmap Addendum §8)
@@ -371,52 +360,6 @@ async def send_discord_alert(message: str) -> bool:
         logger.warning("Discord webhook error: %s", exc)
         return False
 
-
-def build_discord_message(trade: dict, analysis: dict) -> str:
-    """
-    Format pesan Discord (plain text + emoji, tanpa HTML tag).
-    Discord mendukung markdown: **bold**, `code`, dll.
-    """
-    sym   = trade.get("symbol", "")
-    setup = trade.get("setup_type", "").replace("_", " ").title()
-    score = trade.get("signal_score", 0)
-    state = get_trade_state_label(trade.get("state", ""))
-    entry = trade.get("entry_price", 0)
-    sl    = trade.get("sl_price", 0)
-    tp1   = trade.get("tp1_price", 0)
-    tp2   = trade.get("tp2_price", 0)
-
-    friction = (analysis or {}).get("friction", {})
-    tp1_data = friction.get("tp1", {})
-    net_rr   = tp1_data.get("net_rr", 0)
-    rr_str   = f"1 : {net_rr:.2f}" if net_rr > 0 else "N/A"
-
-    mtf_score = (analysis or {}).get("mtf", {}).get("score_ratio", "--")
-    mtf_bias  = (analysis or {}).get("mtf", {}).get("confluence_summary", "--")
-    regime    = (analysis or {}).get("regime", {}).get("regime_label", "--")
-
-    def fp(v: float) -> str:
-        if v == 0: return "--"
-        if v >= 1000: return f"{v:,.2f}"
-        if v >= 1:    return f"{v:.4f}"
-        return f"{v:.6f}"
-
-    lines = [
-        f"⚡ **KRIPTOYOI SCALP ALERT: {sym}**",
-        f"",
-        f"📋 Setup: **{setup}** | Score: **{score}/100**",
-        f"📌 Status: {state}",
-        f"",
-        f"🎯 Entry   : `{fp(entry)}`",
-        f"🛑 SL      : `{fp(sl)}`",
-        f"✅ TP1     : `{fp(tp1)}`",
-        f"🚀 TP2     : `{fp(tp2)}`",
-        f"",
-        f"💰 Net R:R : **{rr_str}**",
-        f"📊 MTF     : {mtf_score} | {mtf_bias}",
-        f"🌐 Regime  : {regime}",
-    ]
-    return "\n".join(lines)
 
 # Cache for P0 analysis (TTL 8 seconds per symbol+interval)
 p0_cache: dict[str, dict] = {}
@@ -518,131 +461,7 @@ async def get_ticker_24h(symbol: str = Query("BTCUSDT")):
 
 
 # ---------------------------------------------------------------------------
-# Trade Lifecycle State Machine Endpoints
-# ---------------------------------------------------------------------------
-
-@app.post("/api/trade/open")
-async def open_trade(
-    symbol:       str   = Query(...,   description="Simbol pair, contoh: SOLUSDT"),
-    interval:     str   = Query("1m",  description="Timeframe sinyal"),
-    entry_price:  float = Query(...,   description="Harga entry"),
-    tp1_price:    float = Query(...,   description="Target TP1"),
-    tp2_price:    float = Query(...,   description="Target TP2"),
-    sl_price:     float = Query(...,   description="Stop Loss"),
-    signal_score: int   = Query(0,     description="Skor sinyal 0–100"),
-    setup_type:   str   = Query("UNKNOWN", description="Tipe setup"),
-    notify:       bool  = Query(True,  description="Kirim alert Telegram"),
-):
-    """
-    Daftarkan setup scalping baru ke State Machine dalam state DETECTED.
-    Opsional kirim notifikasi Telegram.
-    """
-    clean = symbol.upper().replace("_", "")
-    trade = create_trade_state(
-        symbol=clean,
-        interval=interval,
-        entry_price=entry_price,
-        tp1_price=tp1_price,
-        tp2_price=tp2_price,
-        sl_price=sl_price,
-        signal_score=signal_score,
-        setup_type=setup_type,
-    )
-
-    # Simpan ke store (FIFO pruning jika melebihi maks)
-    trade_store[trade["id"]] = trade
-    if len(trade_store) > TRADE_STORE_MAX:
-        oldest = next(iter(trade_store))
-        trade_store.pop(oldest)
-
-    # Telegram alert
-    if notify:
-        # Ambil analisis P0 terkini dari cache untuk enrichment pesan
-        cache_key = f"{clean}_{interval}"
-        analysis_data = p0_cache.get(cache_key, {}).get("data")
-        msg = build_discord_message(trade, analysis_data)
-        asyncio.create_task(send_discord_alert(msg))
-
-    return {"trade_id": trade["id"], "state": trade["state"], "trade": trade}
-
-
-@app.post("/api/trade/update")
-async def update_trade(
-    trade_id:           str   = Query(..., description="ID trade dari /api/trade/open"),
-    current_price:      float = Query(..., description="Harga pasar terkini"),
-    invalidation_price: float = Query(None, description="Level invalidasi struktur"),
-    notify:             bool  = Query(True, description="Kirim alert Telegram saat state berubah"),
-):
-    """
-    Update state trade berdasarkan harga terkini (tick oleh tick atau setiap candle).
-    Dipanggil otomatis oleh frontend via WebSocket candle update, atau manual.
-    """
-    trade = trade_store.get(trade_id)
-    if not trade:
-        raise HTTPException(status_code=404, detail=f"Trade {trade_id} tidak ditemukan")
-
-    prev_state = trade["state"]
-    import time as _t
-    updated = advance_trade_state(
-        trade=trade,
-        current_price=current_price,
-        current_ts=int(_t.time()),
-        invalidation_price=invalidation_price,
-    )
-    trade_store[trade_id] = updated
-    new_state = updated["state"]
-
-    # Kirim Telegram saat ada transisi state penting
-    if notify and new_state != prev_state:
-        important = {"ACTIVE", "TP1_HIT", "BREAKEVEN_ACTIVE", "TP2_HIT", "STOPPED_OUT", "STOPPED_BE", "EXPIRED", "INVALIDATED"}
-        if new_state in important:
-            cache_key = f"{updated['symbol']}_{updated['interval']}"
-            analysis_data = p0_cache.get(cache_key, {}).get("data")
-            msg = build_discord_message(updated, analysis_data)
-            asyncio.create_task(send_discord_alert(msg))
-
-    return {
-        "trade_id": trade_id,
-        "prev_state": prev_state,
-        "new_state": new_state,
-        "state_label": get_trade_state_label(new_state),
-        "trade": updated,
-        "state_changed": new_state != prev_state,
-    }
-
-
-@app.get("/api/trade/list")
-async def list_trades(
-    symbol:      str  = Query(None,    description="Filter by symbol"),
-    active_only: bool = Query(False,   description="Hanya trade yang masih aktif"),
-):
-    """Daftar semua trade di state machine store."""
-    terminal = {"TP2_HIT", "STOPPED_BE", "STOPPED_OUT", "EXPIRED", "INVALIDATED"}
-    trades = list(trade_store.values())
-
-    if symbol:
-        trades = [t for t in trades if t["symbol"] == symbol.upper().replace("_", "")]
-    if active_only:
-        trades = [t for t in trades if t["state"] not in terminal]
-
-    trades.sort(key=lambda t: t.get("detected_at", 0), reverse=True)
-    return {
-        "count": len(trades),
-        "trades": trades,
-    }
-
-
-@app.delete("/api/trade/{trade_id}")
-async def delete_trade(trade_id: str):
-    """Hapus trade dari store (cleanup manual)."""
-    if trade_id not in trade_store:
-        raise HTTPException(status_code=404, detail="Trade tidak ditemukan")
-    trade_store.pop(trade_id)
-    return {"deleted": trade_id}
-
-
-# ---------------------------------------------------------------------------
-# Telegram Test Endpoint
+# Discord Test Endpoint
 # ---------------------------------------------------------------------------
 
 @app.post("/api/discord/test")
