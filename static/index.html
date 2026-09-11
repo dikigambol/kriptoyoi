@@ -190,11 +190,11 @@
       </div>
 
       <!-- Module 3: Key Levels & S/R Zones -->
-      <div class="hud-module mod-levels" title="Modul 3 (Area Beli, Jual & Perlindungan BTC): Memetakan zona diskon (Buy Zone), zona mahal (Sell Zone), dan satpam pelindung BTC">
+      <div class="hud-module mod-levels" title="Modul 3 (Area Beli, Jual & Perlindungan BTC): Memetakan level support (SUP), level resistance (RES), status area harga, dan satpam pelindung BTC">
         <div class="hud-col full-width">
           <div class="hud-row justify-between">
-            <span class="level-tag green" title="Buy Zone (Area Beli Optimal): Rentang harga diskon optimal yang didukung support kuat dan EMA dinamis">SUP <span class="sr-val mono" id="radarBuyZoneVal">--</span></span>
-            <span class="level-tag red" title="Sell Zone (Area Jual Optimal): Rentang harga mahal untuk target take profit atau mencari penolakan harga">RES <span class="sr-val mono" id="radarSellZoneVal">--</span></span>
+            <span class="level-tag green" title="Support (Area Beli): Level support kunci / batas atas area beli optimal">SUP <span class="sr-val mono" id="radarBuyZoneVal">--</span></span>
+            <span class="level-tag red" title="Resistance (Area Jual): Level resistance kunci / batas bawah area jual optimal">RES <span class="sr-val mono" id="radarSellZoneVal">--</span></span>
           </div>
           <div class="hud-row sub-row justify-between">
             <span class="zone-status-pill neutral" id="radarZoneStatusPill" title="Status Posisi Harga Terkini: Memberi tahu apakah harga sekarang berada di dalam Buy Zone, Sell Zone, atau di tengah-tengah (Netral)">
@@ -228,11 +228,11 @@
       <div class="hud-module mod-momentum" title="Modul 5 (Tekanan Beli/Jual & Volatilitas): Memantau dominasi aliran dana real-time, volume, dan volatilitas pasar">
         <div class="hud-col full-width">
           <div class="hud-row justify-between" title="Pita Pesanan (Order Tape): Perbandingan volume beli agresif (Hijau) versus jual agresif (Merah) yang sedang terjadi detik ini">
-            <span class="hud-lbl">Order Tape</span>
-            <div class="tape-bar">
+            <span class="hud-lbl">Tape</span>
+            <div class="tape-bar" title="Grafik Rasio Beli (Hijau) vs Jual (Merah)">
               <div class="tape-fill" id="pressureFillBuy" style="width:50%"></div>
             </div>
-            <span class="rib-sub mono" id="pressureText" title="Tekanan Pasar: Persentase dominasi pihak pembeli (Buy) vs penjual (Sell)">50% Buy</span>
+            <span class="rib-sub mono" id="pressureText" title="Tekanan Pasar: Persentase dominasi pihak pembeli (Buy) vs penjual (Sell)">50% Beli | 50% Jual</span>
           </div>
           <div class="hud-row sub-row justify-between">
             <span class="rvol-badge" id="rvolBadge" title="Relative Volume (RVOL): Volume saat ini dibandingkan rata-rata 20 candle. Jika >1.5x, artinya ada dana besar / paus yang masuk">RVOL --</span>

@@ -983,14 +983,20 @@
     // 2. Render shaded transparent blocks on chart
     updateZoneBlocks();
 
-    // 3. Update Scalper Radar Ribbon Zones Widget
+    // 3. Update Scalper Radar Ribbon Zones Widget (Concise Key Levels)
     if (el.radarBuyZoneVal && currentPrice) {
       const buyDist = (((currentPrice - zones.buyMax) / currentPrice) * 100).toFixed(2);
-      el.radarBuyZoneVal.textContent = `${formatPrice(zones.buyMin, state.symbol)} - ${formatPrice(zones.buyMax, state.symbol)} (-${buyDist}%)`;
+      el.radarBuyZoneVal.textContent = formatPrice(zones.buyMax, state.symbol);
+      if (el.radarBuyZoneVal.parentElement) {
+        el.radarBuyZoneVal.parentElement.title = `Support (Area Beli Optimal): ${formatPrice(zones.buyMax, state.symbol)} (Rentang: ${formatPrice(zones.buyMin, state.symbol)} - ${formatPrice(zones.buyMax, state.symbol)}, Jarak: ${buyDist > 0 ? '-' : '+'}${Math.abs(buyDist)}%)`;
+      }
     }
     if (el.radarSellZoneVal && currentPrice) {
       const sellDist = (((zones.sellMin - currentPrice) / currentPrice) * 100).toFixed(2);
-      el.radarSellZoneVal.textContent = `${formatPrice(zones.sellMin, state.symbol)} - ${formatPrice(zones.sellMax, state.symbol)} (+${sellDist}%)`;
+      el.radarSellZoneVal.textContent = formatPrice(zones.sellMin, state.symbol);
+      if (el.radarSellZoneVal.parentElement) {
+        el.radarSellZoneVal.parentElement.title = `Resistance (Area Jual Optimal): ${formatPrice(zones.sellMin, state.symbol)} (Rentang: ${formatPrice(zones.sellMin, state.symbol)} - ${formatPrice(zones.sellMax, state.symbol)}, Jarak: ${sellDist > 0 ? '+' : '-'}${Math.abs(sellDist)}%)`;
+      }
     }
 
     updateZoneStatusBadge(currentPrice);

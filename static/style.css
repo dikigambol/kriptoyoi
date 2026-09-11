@@ -14,9 +14,12 @@
   --txt2:          #94a3b8;
   --txt3:          #64748b;
   --bull:          #10b981;
+  --bull-color:    #10b981;
   --bull-glow:     rgba(16, 185, 129, 0.25);
   --bear:          #f43f5e;
+  --bear-color:    #f43f5e;
   --bear-glow:     rgba(244, 63, 94, 0.25);
+  --text-secondary:#94a3b8;
   --cyan:          #06b6d4;
   --cyan-glow:     rgba(6, 182, 212, 0.25);
   --blue:          #3b82f6;
@@ -643,54 +646,74 @@ input[title], textarea[title] {
 .cf-value.bear { color: var(--bear); }
 
 /* Module 3: Key Levels & Zones */
+.mod-levels .hud-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+
 .level-tag {
-  font-size: 0.63rem;
-  font-weight: 700;
+  font-size: 0.65rem;
+  font-weight: 800;
   display: inline-flex;
-  align-items: baseline;
-  gap: 3px;
+  align-items: center;
+  gap: 4px;
+  letter-spacing: 0.3px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  flex-shrink: 1;
 }
 .level-tag.green { color: #34d399; }
 .level-tag.red   { color: #fb7185; }
 
 .sr-val {
-  font-size: 0.72rem;
+  font-size: 0.70rem;
   font-family: var(--mono);
-  font-weight: 700;
+  font-weight: 600;
+  color: var(--txt);
   line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.sr-val.green { color: var(--bull); }
-.sr-val.red   { color: var(--bear); }
+.sr-val.green { color: #34d399; }
+.sr-val.red   { color: #fb7185; }
 
 .zone-status-pill {
   display: inline-flex;
   align-items: center;
-  padding: 1px 5px;
-  border-radius: 2px;
-  font-size: 0.65rem;
-  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.2px;
   white-space: nowrap;
   border: 1px solid transparent;
-  line-height: 1.3;
+  line-height: 1.2;
+  flex-shrink: 0;
 }
-.zone-status-pill.in-buy  { background: rgba(16,185,129,0.1); border-color: rgba(16,185,129,0.2); color: #34d399; }
-.zone-status-pill.in-sell { background: rgba(244,63,94,0.1);  border-color: rgba(244,63,94,0.2);  color: #fb7185; }
-.zone-status-pill.neutral { background: rgba(100,116,139,0.08); border-color: var(--border); color: var(--txt3); }
+.zone-status-pill.in-buy  { background: rgba(16,185,129,0.12); border-color: rgba(16,185,129,0.3); color: #34d399; }
+.zone-status-pill.in-sell { background: rgba(244,63,94,0.12);  border-color: rgba(244,63,94,0.3);  color: #fb7185; }
+.zone-status-pill.neutral { background: rgba(100,116,139,0.1); border-color: var(--border); color: var(--txt3); }
 
 .btc-gatekeeper-badge {
   display: inline-flex;
   align-items: center;
-  padding: 1px 5px;
-  border-radius: 2px;
-  font-size: 0.65rem;
-  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 0.64rem;
+  font-weight: 700;
   border: 1px solid transparent;
   white-space: nowrap;
-  line-height: 1.3;
+  line-height: 1.2;
+  flex-shrink: 0;
 }
-.btc-gatekeeper-badge.safe     { background: rgba(16,185,129,0.08);  border-color: rgba(16,185,129,0.2);  color: #34d399; }
-.btc-gatekeeper-badge.caution  { background: rgba(245,158,11,0.08);  border-color: rgba(245,158,11,0.25); color: var(--amber); }
-.btc-gatekeeper-badge.dump-risk{ background: rgba(244,63,94,0.12);   border-color: rgba(244,63,94,0.4);   color: #fb7185; animation: blink 1.2s ease-in-out infinite; }
+.btc-gatekeeper-badge.safe     { background: rgba(16,185,129,0.1);  border-color: rgba(16,185,129,0.25);  color: #34d399; }
+.btc-gatekeeper-badge.caution  { background: rgba(245,158,11,0.1);  border-color: rgba(245,158,11,0.3);   color: var(--amber); }
+.btc-gatekeeper-badge.dump-risk{ background: rgba(244,63,94,0.15);  border-color: rgba(244,63,94,0.45);   color: #fb7185; animation: blink 1.2s ease-in-out infinite; }
 .btc-gatekeeper-badge.no-data  { color: var(--txt3); }
 
 /* Module 4: Risk:Reward & Targets */
@@ -731,18 +754,30 @@ input[title], textarea[title] {
 /* Module 5: Order Flow & Momentum */
 .tape-bar {
   flex: 1;
-  max-width: 60px;
-  height: 5px;
+  min-width: 55px;
+  max-width: 85px;
+  height: 9px;
   border-radius: var(--radius-full);
-  background: rgba(244,63,94,0.3);
+  background: #f43f5e;
   overflow: hidden;
-  margin: 0 4px;
+  margin: 0 5px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.5);
+  display: flex;
 }
 .tape-fill {
   height: 100%;
-  border-radius: var(--radius-full);
-  background: var(--bull);
-  transition: width 0.4s ease;
+  border-radius: var(--radius-full) 0 0 var(--radius-full);
+  background: #10b981;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.4);
+  transition: width 0.3s ease;
+}
+
+#pressureText {
+  font-size: 0.73rem;
+  font-weight: 800;
+  white-space: nowrap;
+  letter-spacing: -0.2px;
 }
 
 .rvol-badge, .atr-badge {
